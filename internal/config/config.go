@@ -1,0 +1,90 @@
+// Package config collects agent settings from flags and environment
+// variables (flags win). Every option has a TUNNELO_* variable so the
+// Docker/Unraid deployments need no arguments.
+package config
+
+import (
+	"flag"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"os"
+	"strconv"
+)
+
+// Config holds all agent settings.
+type Config struct {
+	Token       string // one-time user token; only needed until first registration
+	GatewayURL  string
+	StateDir    string
+	JellyfinURL string
+	Interface   string
+	Userspace   bool // force userspace wireguard-go
+	Speedtest   bool // re-run the upload test even if already done
+	LogLevel    slog.Level
+}
+
+const defaultGatewayURL = "https://api.tunnelo.io"
+
+// Load parses args (excluding the program name) into a Config.
+func Load(args []string) (*Config, error) {
+	fs := flag.NewFlagSet("tunnelo-agent", flag.ContinueOnError)
+	cfg := &Config{}
+	var logLevel string
+
+	fs.StringVar(&cfg.Token, "token", envStr("TUNNELO_TOKEN", ""),
+		"one-time user token from the Tunnelo dashboard (env TUNNELO_TOKEN)")
+	fs.StringVar(&cfg.GatewayURL, "gateway-url", envStr("TUNNELO_GATEWAY_URL", defaultGatewayURL),
+		"gateway API base URL (env TUNNELO_GATEWAY_URL)")
+	fs.StringVar(&cfg.StateDir, "state-dir", envStr("TUNNELO_STATE_DIR", "/var/lib/tunnelo-agent"),
+		"directory for persisted state, including the WireGuard private key (env TUNNELO_STATE_DIR)")
+	fs.StringVar(&cfg.JellyfinURL, "jellyfin-url", envStr("TUNNELO_JELLYFIN_URL", "http://127.0.0.1:8096"),
+		"where to reach the local Jellyfin server (env TUNNELO_JELLYFIN_URL)")
+	fs.StringVar(&cfg.Interface, "interface", envStr("TUNNELO_INTERFACE", "tunnelo0"),
+		"WireGuard interface name (env TUNNELO_INTERFACE)")
+	fs.BoolVar(&cfg.Userspace, "userspace", envBool("TUNNELO_USERSPACE"),
+		"use userspace wireguard-go even if the kernel module is available (env TUNNELO_USERSPACE)")
+	fs.BoolVar(&cfg.Speedtest, "speedtest", false,
+		"re-run the upload speed test on startup")
+	fs.StringVar(&logLevel, "log-level", envStr("TUNNELO_LOG_LEVEL", "info"),
+		"log level: debug, info, warn, error (env TUNNELO_LOG_LEVEL)")
+
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if err := cfg.LogLevel.UnmarshalText([]byte(logLevel)); err != nil {
+		return nil, fmt.Errorf("invalid log level %q", logLevel)
+	}
+	if _, err := url.ParseRequestURI(cfg.GatewayURL); err != nil {
+		return nil, fmt.Errorf("invalid gateway URL %q", cfg.GatewayURL)
+	}
+	return cfg, nil
+}
+
+// JellyfinHostPort returns the host:port the tunnel relay should dial.
+func (c *Config) JellyfinHostPort() (string, error) {
+	u, err := url.Parse(c.JellyfinURL)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("invalid Jellyfin URL %q", c.JellyfinURL)
+	}
+	if u.Port() != "" {
+		return u.Host, nil
+	}
+	port := "80"
+	if u.Scheme == "https" {
+		port = "443"
+	}
+	return u.Host + ":" + port, nil
+}
+
+func envStr(key, fallback string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	return fallback
+}
+
+func envBool(key string) bool {
+	v, err := strconv.ParseBool(os.Getenv(key))
+	return err == nil && v
+}
