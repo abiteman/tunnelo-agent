@@ -1,0 +1,16 @@
+# Binaries
+/agent
+/tunnelo-agent
+/dist/
+
+# Test artifacts
+*.test
+coverage.out
+
+# Local state (never commit keys)
+state.json
+*.key
+
+# Editor
+.idea/
+.vscode/
