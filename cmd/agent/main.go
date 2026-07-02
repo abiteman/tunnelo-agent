@@ -157,8 +157,13 @@ func registerAgent(ctx context.Context, cfg *config.Config, jellyfin *detect.Pro
 			break
 		}
 		var apiErr *register.APIError
-		if errors.As(err, &apiErr) && apiErr.Fatal() {
-			return nil, fmt.Errorf("registration rejected — check your token in the Tunnelo dashboard: %w", err)
+		if errors.As(err, &apiErr) {
+			if apiErr.Fatal() {
+				return nil, fmt.Errorf("registration rejected — check your token in the Tunnelo dashboard: %w", err)
+			}
+			if !apiErr.Retryable() {
+				return nil, fmt.Errorf("gateway rejected the registration request (agent/gateway version mismatch?): %w", err)
+			}
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()

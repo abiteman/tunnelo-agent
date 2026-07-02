@@ -28,14 +28,28 @@ Non-2xx responses carry:
 { "error": { "code": "invalid_token", "message": "human-readable detail" } }
 ```
 
-Codes the agent handles specially:
+| HTTP | `code` | Meaning |
+|------|--------|---------|
+| 400 | `bad_request` | malformed body / missing or invalid field |
+| 401 | `invalid_token` | user token unknown or revoked (registration) |
+| 401 | `invalid_agent` | agent credentials revoked |
+| 413 | `too_large` | speed-test upload exceeded the advertised size |
+| 503 | `not_ready` | gateway cannot verify agent state right now; retry with backoff |
+| 500 | `internal` | gateway-side failure; safe to retry with backoff |
 
-- `invalid_token` (401) — user token is wrong or revoked; the agent exits
-  with an actionable error instead of retrying.
-- `invalid_agent` (401) — agent secret revoked (e.g. key regenerated from the
-  dashboard); the agent discards its persisted state and requires
-  re-registration.
-- Any 5xx or network error — retried with exponential backoff.
+How the agent reacts:
+
+- `invalid_token` — the agent exits with an actionable error instead of
+  retrying.
+- `invalid_agent` — the agent discards its persisted state and requires
+  re-registration. The gateway sends this **only** for truly revoked
+  credentials (key regenerated, seat re-registered), never for transient
+  conditions — those are `503 not_ready`.
+- Any other 4xx (e.g. `bad_request`) — the request itself is wrong;
+  registration fails fast instead of retrying. `429` is the exception and
+  is treated as retryable.
+- 5xx and network errors — retried with exponential backoff (registration)
+  or on the next tick (heartbeat).
 
 ## `POST /v1/agents/register`
 
@@ -75,32 +89,37 @@ Response `200`:
 {
   "agent_id": "agt_01hxyz…",
   "agent_secret": "as_…",
-  "subdomain": "brave-otter.tunnelo.io",
+  "subdomain": "quiet-falcon",
   "wireguard": {
-    "address": "10.66.0.7/32",
-    "mtu": 1280,
+    "address": "10.77.0.42/32",
+    "mtu": 1420,
     "peer": {
       "public_key": "base64 gateway public key",
-      "endpoint": "gw1.tunnelo.io:51820",
-      "allowed_ips": ["10.66.0.1/32"],
+      "endpoint": "wg.<ourdomain>:51820",
+      "allowed_ips": ["10.77.0.1/32"],
       "persistent_keepalive_seconds": 25
     }
   },
   "service_port": 8096,
-  "heartbeat_interval_seconds": 60,
+  "heartbeat_interval_seconds": 30,
   "speedtest": {
-    "upload_url": "https://gw1.tunnelo.io/v1/speedtest/sink",
-    "size_bytes": 33554432,
-    "max_seconds": 15
+    "upload_url": "https://api.<ourdomain>/v1/agents/agt_01hxyz…/speedtest/sink",
+    "size_bytes": 50000000,
+    "max_seconds": 20
   }
 }
 ```
 
+- `subdomain` is the bare label (the dashboard/gateway own the full
+  hostname); the agent treats it as opaque.
 - `wireguard.address` is the tunnel IP the gateway routes the user's
-  subdomain to, on `service_port`.
+  subdomain to, on `service_port` — the **only** port the gateway routes.
 - `allowed_ips` is deliberately narrow (the gateway's tunnel IP only): the
   tunnel carries proxy traffic, nothing else.
 - `heartbeat_interval_seconds` sets the agent's reporting cadence.
+- Re-registering with the same user token replaces the previous peer for
+  the seat and **revokes the old `agent_secret`** — one seat, one active
+  peer.
 
 ## `POST /v1/agents/{agent_id}/heartbeat`
 
@@ -139,7 +158,7 @@ even in managed mode.
 Response `200`:
 
 ```json
-{ "heartbeat_interval_seconds": 60 }
+{ "heartbeat_interval_seconds": 30 }
 ```
 
 ## Upload speed test
@@ -149,23 +168,32 @@ steps:
 
 ### 1. `POST <speedtest.upload_url>`
 
-Auth: **agent secret**. Body: `application/octet-stream`, random bytes,
-streamed until `size_bytes` are sent or `max_seconds` elapse. The gateway
-discards the body. Response `200` with empty body. The agent measures
-throughput client-side.
+The per-agent sink advertised at registration
+(`/v1/agents/{agent_id}/speedtest/sink`). Auth: **agent secret**. Body:
+`application/octet-stream`, random bytes, streamed until `size_bytes` are
+sent or `max_seconds` elapse. The gateway discards the body and enforces a
+max size (`size_bytes` + 1 MiB slack → `413 too_large` beyond that).
+
+Response `200`:
+
+```json
+{ "received_bytes": 50000000 }
+```
+
+The agent measures throughput client-side and ignores the response body.
 
 ### 2. `POST /v1/agents/{agent_id}/speedtest`
 
 Auth: **agent secret**.
 
-Request:
+Request (`measured_at` is RFC 3339 UTC):
 
 ```json
 {
   "upload_mbps": 23.4,
-  "bytes_sent": 33554432,
-  "duration_ms": 11467,
-  "measured_at": "2026-07-02T12:00:00Z"
+  "bytes_sent": 50000000,
+  "duration_ms": 17100,
+  "measured_at": "2026-07-02T10:15:00Z"
 }
 ```
 

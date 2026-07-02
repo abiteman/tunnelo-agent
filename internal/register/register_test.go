@@ -120,6 +120,28 @@ func TestRegisterInvalidToken(t *testing.T) {
 	}
 }
 
+func TestAPIErrorRetryable(t *testing.T) {
+	tests := []struct {
+		status int
+		code   string
+		want   bool
+	}{
+		{http.StatusBadRequest, "bad_request", false},
+		{http.StatusUnauthorized, "invalid_token", false},
+		{http.StatusRequestEntityTooLarge, "too_large", false},
+		{http.StatusTooManyRequests, "rate_limited", true},
+		{http.StatusInternalServerError, "internal", true},
+		{http.StatusServiceUnavailable, "not_ready", true},
+		{http.StatusBadGateway, "unknown", true},
+	}
+	for _, tt := range tests {
+		e := &APIError{StatusCode: tt.status, Code: tt.code}
+		if got := e.Retryable(); got != tt.want {
+			t.Errorf("Retryable(%d %s) = %v, want %v", tt.status, tt.code, got, tt.want)
+		}
+	}
+}
+
 func TestRegisterMalformedErrorBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)

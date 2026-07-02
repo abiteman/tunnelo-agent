@@ -81,6 +81,14 @@ func (e *APIError) Fatal() bool {
 	return e.Code == "invalid_token" || e.Code == "invalid_agent"
 }
 
+// Retryable reports whether the gateway might accept the same request later.
+// Per the contract, 5xx (including 503 not_ready) may be retried with
+// backoff; 4xx means the request itself is wrong and repeating it can't
+// help — except 429, which is a pacing signal rather than a rejection.
+func (e *APIError) Retryable() bool {
+	return e.StatusCode >= 500 || e.StatusCode == http.StatusTooManyRequests
+}
+
 // ParseErrorBody decodes the gateway's JSON error envelope from a non-2xx
 // response. It always returns a non-nil *APIError, falling back to the raw
 // body when the envelope doesn't parse.
