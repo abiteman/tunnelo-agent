@@ -29,17 +29,25 @@ type Forwarder struct {
 
 // Run binds ListenAddr and relays connections to TargetAddr until ctx is
 // cancelled. The bind is retried while the tunnel interface is still coming
-// up; an "address in use" result is treated as "a local listener already
-// serves this port" and turns Run into a no-op.
+// up. An "address in use" result is treated as "Jellyfin's own listener
+// already serves this port" and turns Run into a no-op — but only when the
+// listen and target ports match; when the user moved Jellyfin to another
+// port, whatever owns the tunnel port is NOT Jellyfin, and stepping aside
+// would publish that unknown service on the user's subdomain.
 func (f *Forwarder) Run(ctx context.Context) error {
 	log := f.Logger.With("component", "forward", "listen", f.ListenAddr, "target", f.TargetAddr)
 
 	ln, err := f.bind(ctx)
 	if err != nil {
 		if errors.Is(err, syscall.EADDRINUSE) {
-			log.Info("port already served locally; relay not needed")
-			<-ctx.Done()
-			return nil
+			if samePort(f.ListenAddr, f.TargetAddr) {
+				log.Info("port already served locally; relay not needed")
+				<-ctx.Done()
+				return nil
+			}
+			return fmt.Errorf(
+				"tunnel port (%s) is in use by another local service, but Jellyfin is configured at %s — refusing to expose the wrong service; free the port or run the agent in a container",
+				f.ListenAddr, f.TargetAddr)
 		}
 		return err
 	}
@@ -99,6 +107,13 @@ func (f *Forwarder) relay(ctx context.Context, src net.Conn, log *slog.Logger) {
 	go pipe(&wg, dst, src)
 	go pipe(&wg, src, dst)
 	wg.Wait()
+}
+
+// samePort reports whether both host:port addresses use the same port.
+func samePort(a, b string) bool {
+	_, ap, errA := net.SplitHostPort(a)
+	_, bp, errB := net.SplitHostPort(b)
+	return errA == nil && errB == nil && ap == bp
 }
 
 // pipe copies one direction and half-closes the destination so the peer

@@ -85,18 +85,47 @@ func TestForwarderRelays(t *testing.T) {
 }
 
 func TestForwarderStepsAsideWhenPortServed(t *testing.T) {
-	// Something (Jellyfin on bare metal) already owns the port.
+	// Jellyfin on bare metal already owns the port the gateway routes to:
+	// listen and target ports match, so the relay is redundant.
 	existing, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer existing.Close()
+	_, port, _ := net.SplitHostPort(existing.Addr().String())
 
-	f := &Forwarder{ListenAddr: existing.Addr().String(), TargetAddr: "127.0.0.1:1", Logger: slog.Default()}
+	f := &Forwarder{
+		ListenAddr: existing.Addr().String(),
+		TargetAddr: "127.0.0.1:" + port,
+		Logger:     slog.Default(),
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	if err := f.Run(ctx); err != nil {
 		t.Errorf("Run = %v, want nil (relay not needed)", err)
+	}
+}
+
+func TestForwarderRefusesPortConflictOnCustomJellyfinPort(t *testing.T) {
+	// Jellyfin runs on a custom port, and some unrelated service owns the
+	// port the gateway routes to. Stepping aside would publish that
+	// unrelated service on the user's subdomain; the forwarder must fail
+	// loudly instead.
+	unrelated, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unrelated.Close()
+
+	f := &Forwarder{
+		ListenAddr: unrelated.Addr().String(),
+		TargetAddr: "127.0.0.1:9096",
+		Logger:     slog.Default(),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := f.Run(ctx); err == nil {
+		t.Fatal("Run = nil, want error for port conflict with mismatched Jellyfin port")
 	}
 }
 

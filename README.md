@@ -122,6 +122,9 @@ Every flag has an environment variable; flags win.
 - **Jellyfin shows unreachable** — the agent probes `TUNNELO_JELLYFIN_URL`
   from *its own* network namespace; from inside Docker, `127.0.0.1` is the
   agent container, not your host. Use the host's LAN IP.
+- **Changed Jellyfin's port?** Set `TUNNELO_JELLYFIN_URL` to match (e.g.
+  `http://127.0.0.1:9096`). Your public subdomain is unaffected — the agent
+  bridges the gateway's port to wherever Jellyfin actually listens.
 
 ## Building from source
 
