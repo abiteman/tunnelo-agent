@@ -94,6 +94,42 @@ Search for **tunnelo-agent** in Community Applications (template in
 server's LAN IP, e.g. `http://192.168.1.100:8096`. The template presets the
 `NET_ADMIN` capability and `/dev/net/tun` device.
 
+### Already running WireGuard? (advanced)
+
+If you'd rather carry the Tunnelo peer on WireGuard you already operate — a
+router, wg-quick on the host, an existing WireGuard container — run the
+agent in **external tunnel mode**:
+
+```sh
+docker run -d --name tunnelo-agent \
+  --restart unless-stopped \
+  -e TUNNELO_TOKEN=<your token> \
+  -e TUNNELO_TUNNEL_MODE=external \
+  -e TUNNELO_JELLYFIN_URL=http://<jellyfin-host>:8096 \
+  -v tunnelo-agent:/var/lib/tunnelo-agent \
+  ghcr.io/abiteman/tunnelo-agent:latest
+```
+
+Note what's missing: **no `NET_ADMIN`, no `/dev/net/tun`** — in this mode
+the agent is a completely unprivileged process. It registers, writes a
+standard wg-quick config to `/var/lib/tunnelo-agent/tunnelo-wg.conf` (or
+`--wg-config-out`), and keeps reporting Jellyfin health. You add that
+config to your own WireGuard; the gateway reads tunnel status from its own
+end, so the dashboard stays accurate.
+
+What becomes your responsibility:
+
+- Traffic the gateway sends to your tunnel IP on the Jellyfin port must
+  reach Jellyfin. If your WireGuard terminates on the Jellyfin host and
+  Jellyfin listens on `0.0.0.0`, that's automatic; if it terminates on a
+  router or another box, you need the DNAT/route.
+- Don't let another peer's `AllowedIPs` (e.g. a commercial VPN's
+  `0.0.0.0/0`) swallow the Tunnelo gateway's address.
+
+The managed mode exists because this is exactly the plumbing most people
+don't want to own — but if you already own it, external mode stays out of
+your way.
+
 ## Configuration
 
 Every flag has an environment variable; flags win.
@@ -105,6 +141,8 @@ Every flag has an environment variable; flags win.
 | `--gateway-url` | `TUNNELO_GATEWAY_URL` | `https://api.tunnelo.io` | Gateway API |
 | `--state-dir` | `TUNNELO_STATE_DIR` | `/var/lib/tunnelo-agent` | Credentials + private key |
 | `--interface` | `TUNNELO_INTERFACE` | `tunnelo0` | WireGuard interface name |
+| `--tunnel-mode` | `TUNNELO_TUNNEL_MODE` | `managed` | `external` = bring your own WireGuard |
+| `--wg-config-out` | `TUNNELO_WG_CONFIG_OUT` | `<state-dir>/tunnelo-wg.conf` | Where external mode writes the wg-quick config |
 | `--userspace` | `TUNNELO_USERSPACE` | `false` | Force userspace wireguard-go |
 | `--speedtest` | — | `false` | Re-run the upload speed test |
 | `--log-level` | `TUNNELO_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |

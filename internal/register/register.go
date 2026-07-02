@@ -27,6 +27,7 @@ type Request struct {
 	PublicKey    string        `json:"public_key"`
 	Hostname     string        `json:"hostname"`
 	AgentVersion string        `json:"agent_version"`
+	TunnelMode   string        `json:"tunnel_mode"` // TunnelManaged or TunnelExternal
 	Jellyfin     *JellyfinInfo `json:"jellyfin"`
 }
 

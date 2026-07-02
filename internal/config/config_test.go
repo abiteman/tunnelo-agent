@@ -3,6 +3,8 @@ package config
 import (
 	"log/slog"
 	"testing"
+
+	"github.com/abiteman/tunnelo-agent/internal/register"
 )
 
 func TestLoadDefaultsAndFlags(t *testing.T) {
@@ -60,6 +62,23 @@ func TestLoadRejectsBadInput(t *testing.T) {
 	}
 	if _, err := Load([]string{"--gateway-url", "not a url"}); err == nil {
 		t.Error("Load accepted bogus gateway URL")
+	}
+	if _, err := Load([]string{"--tunnel-mode", "sidecar"}); err == nil {
+		t.Error("Load accepted bogus tunnel mode")
+	}
+}
+
+func TestLoadTunnelModes(t *testing.T) {
+	cfg, err := Load(nil)
+	if err != nil || cfg.TunnelMode != register.TunnelManaged {
+		t.Errorf("default tunnel mode = %q, %v; want managed", cfg.TunnelMode, err)
+	}
+	cfg, err = Load([]string{"--tunnel-mode", "external", "--wg-config-out", "/etc/wireguard/tunnelo.conf"})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.TunnelMode != register.TunnelExternal || cfg.WgConfigOut != "/etc/wireguard/tunnelo.conf" {
+		t.Errorf("cfg = %+v", cfg)
 	}
 }
 

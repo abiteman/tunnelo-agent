@@ -52,6 +52,7 @@ Request:
   "public_key": "base64 WireGuard public key (generated locally; the private key never leaves the host)",
   "hostname": "media-box",
   "agent_version": "v0.1.0",
+  "tunnel_mode": "managed",
   "jellyfin": {
     "detected": true,
     "version": "10.10.3",
@@ -62,6 +63,11 @@ Request:
 ```
 
 `jellyfin` is best-effort detection at startup and may be `null`.
+
+`tunnel_mode` is `"managed"` (the agent runs WireGuard itself, default) or
+`"external"` (the user carries the peer on WireGuard they already run; the
+agent renders a wg-quick config and only reports Jellyfin health). The
+gateway can use this to tailor dashboard setup hints.
 
 Response `200`:
 
@@ -124,6 +130,11 @@ Request:
 `tunnel.up` means a WireGuard handshake completed within the last 3 minutes.
 The gateway uses `jellyfin.reachable` to serve a friendly "server offline"
 page instead of a proxy timeout.
+
+`tunnel` is **omitted** in external tunnel mode: the gateway terminates the
+tunnel, so its own peer table (last handshake, byte counters) is the
+authoritative status source there. Agent-side tunnel status is advisory
+even in managed mode.
 
 Response `200`:
 

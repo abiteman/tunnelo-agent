@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -63,24 +64,34 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		log.Info("using existing registration", "agent_id", state.AgentID, "subdomain", state.Subdomain)
 	}
 
-	tunnelIP, manager, err := buildTunnel(cfg, state, log)
-	if err != nil {
-		return err
-	}
-
 	group, ctx := errgroup.WithContext(ctx)
-	group.Go(func() error { return manager.Run(ctx) })
 
-	jellyfinAddr, err := cfg.JellyfinHostPort()
-	if err != nil {
-		return err
+	// In external mode the user's own WireGuard carries the tunnel; the
+	// agent only renders the peer config and keeps reporting health.
+	var tunnelSource heartbeat.TunnelStatusSource
+	if cfg.TunnelMode == register.TunnelExternal {
+		if err := writeWgQuickConfig(cfg, state, log); err != nil {
+			return err
+		}
+	} else {
+		tunnelIP, manager, err := buildTunnel(cfg, state, log)
+		if err != nil {
+			return err
+		}
+		tunnelSource = manager
+		group.Go(func() error { return manager.Run(ctx) })
+
+		jellyfinAddr, err := cfg.JellyfinHostPort()
+		if err != nil {
+			return err
+		}
+		forwarder := &tunnel.Forwarder{
+			ListenAddr: fmt.Sprintf("%s:%d", tunnelIP, servicePort(state)),
+			TargetAddr: jellyfinAddr,
+			Logger:     log,
+		}
+		group.Go(func() error { return forwarder.Run(ctx) })
 	}
-	forwarder := &tunnel.Forwarder{
-		ListenAddr: fmt.Sprintf("%s:%d", tunnelIP, servicePort(state)),
-		TargetAddr: jellyfinAddr,
-		Logger:     log,
-	}
-	group.Go(func() error { return forwarder.Run(ctx) })
 
 	sender := &heartbeat.Sender{
 		GatewayURL:   cfg.GatewayURL,
@@ -88,7 +99,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		AgentSecret:  state.AgentSecret,
 		AgentVersion: version,
 		Interval:     time.Duration(state.HeartbeatInterval) * time.Second,
-		Tunnel:       manager,
+		Tunnel:       tunnelSource,
 		Jellyfin:     jellyfin,
 		Logger:       log,
 	}
@@ -130,6 +141,7 @@ func registerAgent(ctx context.Context, cfg *config.Config, jellyfin *detect.Pro
 	req := register.Request{
 		PublicKey:    key.PublicKey().String(),
 		AgentVersion: version,
+		TunnelMode:   cfg.TunnelMode,
 		Jellyfin:     detectJellyfin(ctx, jellyfin, log),
 	}
 	if req.Hostname, err = os.Hostname(); err != nil {
@@ -213,6 +225,30 @@ func buildTunnel(cfg *config.Config, state *register.State, log *slog.Logger) (s
 		return "", nil, err
 	}
 	return ip, tunnel.NewManager(tcfg, log), nil
+}
+
+// writeWgQuickConfig renders the peer config for the user's own WireGuard.
+// An existing file is left untouched (the user may have merged or edited
+// it); delete it to regenerate.
+func writeWgQuickConfig(cfg *config.Config, state *register.State, log *slog.Logger) error {
+	path := cfg.WgConfigOut
+	if path == "" {
+		path = filepath.Join(cfg.StateDir, "tunnelo-wg.conf")
+	}
+	if _, err := os.Stat(path); err == nil {
+		log.Info("external tunnel mode: wg-quick config already written", "path", path)
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("creating config dir: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(state.WgQuickConfig()), 0o600); err != nil {
+		return fmt.Errorf("writing wg-quick config: %w", err)
+	}
+	log.Info("external tunnel mode: wrote wg-quick config — add it to your WireGuard setup",
+		"path", path,
+		"note", fmt.Sprintf("the gateway routes %s to your tunnel IP on port %d", state.Subdomain, servicePort(state)))
+	return nil
 }
 
 func servicePort(state *register.State) int {

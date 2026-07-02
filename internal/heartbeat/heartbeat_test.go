@@ -82,6 +82,38 @@ func TestHeartbeatReportsStatus(t *testing.T) {
 	}
 }
 
+func TestHeartbeatOmitsTunnelInExternalMode(t *testing.T) {
+	bodies := make(chan map[string]any, 1)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		select {
+		case bodies <- body:
+		default:
+		}
+		w.Write([]byte(`{}`))
+	}))
+	defer gateway.Close()
+
+	s := newSender(t, gateway.URL, "http://127.0.0.1:1")
+	s.Tunnel = nil // external mode: user brings their own WireGuard
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.Run(ctx)
+
+	select {
+	case body := <-bodies:
+		if _, ok := body["tunnel"]; ok {
+			t.Errorf("heartbeat body contains tunnel block in external mode: %v", body)
+		}
+		if _, ok := body["jellyfin"]; !ok {
+			t.Errorf("heartbeat body missing jellyfin block: %v", body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no heartbeat received")
+	}
+}
+
 func TestBeatAdjustsInterval(t *testing.T) {
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"heartbeat_interval_seconds": 120}`))

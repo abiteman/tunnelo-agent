@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+
+	"github.com/abiteman/tunnelo-agent/internal/register"
 )
 
 // Config holds all agent settings.
@@ -19,8 +21,10 @@ type Config struct {
 	StateDir    string
 	JellyfinURL string
 	Interface   string
-	Userspace   bool // force userspace wireguard-go
-	Speedtest   bool // re-run the upload test even if already done
+	TunnelMode  string // register.TunnelManaged or register.TunnelExternal
+	WgConfigOut string // where external mode writes the wg-quick config
+	Userspace   bool   // force userspace wireguard-go
+	Speedtest   bool   // re-run the upload test even if already done
 	LogLevel    slog.Level
 }
 
@@ -42,6 +46,10 @@ func Load(args []string) (*Config, error) {
 		"where to reach the local Jellyfin server (env TUNNELO_JELLYFIN_URL)")
 	fs.StringVar(&cfg.Interface, "interface", envStr("TUNNELO_INTERFACE", "tunnelo0"),
 		"WireGuard interface name (env TUNNELO_INTERFACE)")
+	fs.StringVar(&cfg.TunnelMode, "tunnel-mode", envStr("TUNNELO_TUNNEL_MODE", register.TunnelManaged),
+		"'managed' runs WireGuard itself; 'external' writes a wg-quick config for WireGuard you already run (env TUNNELO_TUNNEL_MODE)")
+	fs.StringVar(&cfg.WgConfigOut, "wg-config-out", envStr("TUNNELO_WG_CONFIG_OUT", ""),
+		"external mode: where to write the wg-quick config (default <state-dir>/tunnelo-wg.conf) (env TUNNELO_WG_CONFIG_OUT)")
 	fs.BoolVar(&cfg.Userspace, "userspace", envBool("TUNNELO_USERSPACE"),
 		"use userspace wireguard-go even if the kernel module is available (env TUNNELO_USERSPACE)")
 	fs.BoolVar(&cfg.Speedtest, "speedtest", false,
@@ -57,6 +65,10 @@ func Load(args []string) (*Config, error) {
 	}
 	if _, err := url.ParseRequestURI(cfg.GatewayURL); err != nil {
 		return nil, fmt.Errorf("invalid gateway URL %q", cfg.GatewayURL)
+	}
+	if cfg.TunnelMode != register.TunnelManaged && cfg.TunnelMode != register.TunnelExternal {
+		return nil, fmt.Errorf("invalid tunnel mode %q (want %q or %q)",
+			cfg.TunnelMode, register.TunnelManaged, register.TunnelExternal)
 	}
 	return cfg, nil
 }

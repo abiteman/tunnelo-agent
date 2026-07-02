@@ -34,11 +34,19 @@ type JellyfinStatus struct {
 	Version   string `json:"version,omitempty"`
 }
 
-// Report is the heartbeat request body.
+// Report is the heartbeat request body. Tunnel is omitted in external
+// tunnel mode: the gateway terminates the tunnel and reads handshake state
+// from its own peer table.
 type Report struct {
 	AgentVersion string         `json:"agent_version"`
-	Tunnel       TunnelStatus   `json:"tunnel"`
+	Tunnel       *TunnelStatus  `json:"tunnel,omitempty"`
 	Jellyfin     JellyfinStatus `json:"jellyfin"`
+}
+
+// TunnelStatusSource provides tunnel state for heartbeats. A nil source
+// means the tunnel is managed outside the agent.
+type TunnelStatusSource interface {
+	Status() tunnel.Status
 }
 
 // ErrAgentRevoked is returned by Run when the gateway rejects the agent
@@ -53,7 +61,7 @@ type Sender struct {
 	AgentSecret  string
 	AgentVersion string
 	Interval     time.Duration
-	Tunnel       *tunnel.Manager
+	Tunnel       TunnelStatusSource // nil when the user brings their own WireGuard
 	Jellyfin     *detect.Prober
 	Logger       *slog.Logger
 	HTTPClient   *http.Client
@@ -131,9 +139,12 @@ func (s *Sender) beat(ctx context.Context) error {
 	return nil
 }
 
-func (s *Sender) tunnelStatus() TunnelStatus {
+func (s *Sender) tunnelStatus() *TunnelStatus {
+	if s.Tunnel == nil {
+		return nil
+	}
 	st := s.Tunnel.Status()
-	ts := TunnelStatus{Up: st.Up, RxBytes: st.RxBytes, TxBytes: st.TxBytes}
+	ts := &TunnelStatus{Up: st.Up, RxBytes: st.RxBytes, TxBytes: st.TxBytes}
 	if !st.LastHandshake.IsZero() {
 		ts.LastHandshakeUnix = st.LastHandshake.Unix()
 	}
