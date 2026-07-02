@@ -1,0 +1,141 @@
+# Tunnelo Agent
+
+Give your Jellyfin server a public address like `https://your-name.tunnelo.io`
+— no port forwarding, no dynamic DNS, no reverse proxy, no certificate
+wrangling.
+
+The agent runs next to your Jellyfin server, keeps an **outbound** WireGuard
+tunnel to the Tunnelo gateway, and relays your Jellyfin port over it. Because
+the connection is outbound, it works behind CGNAT, double NAT, and ISPs that
+block inbound ports.
+
+## What it does
+
+1. **Registers** your server: you paste a one-time token from your Tunnelo
+   dashboard; the agent generates a WireGuard keypair locally and exchanges
+   the public key for a tunnel configuration and your subdomain.
+2. **Maintains the tunnel**: uses the kernel WireGuard module when available
+   and falls back to userspace `wireguard-go` when it isn't (no kernel
+   module needed — handy for Unraid, older kernels, and restricted VMs).
+   Reconnects automatically with backoff if your network drops or the
+   gateway's address changes.
+3. **Detects Jellyfin**: probes your Jellyfin server's public info endpoint
+   (`/System/Info/Public`, no credentials involved) so the dashboard can show
+   its version and reachability.
+4. **Measures your upload speed** once at setup, against the gateway. Most
+   residential connections upload at 10–35 Mbps — that, not Tunnelo, is the
+   ceiling for remote streaming quality, and it's better to know up front.
+5. **Sends heartbeats** (tunnel state + Jellyfin reachability) so your
+   subdomain shows a clear "server offline" page instead of a timeout when
+   your box is down.
+
+## What it can access — and what it can't
+
+Worth being explicit, since this thing runs on your media server:
+
+- The tunnel is **restricted to your Jellyfin port**. The gateway routes
+  `your-name.tunnelo.io` to exactly one port on the tunnel; the peer's
+  `allowed_ips` covers only the gateway itself. It is not a general-purpose
+  VPN into your network.
+- Traffic to your subdomain is **end-to-end between viewers and your
+  Jellyfin** over TLS at the gateway + WireGuard to your box. Your Jellyfin
+  credentials and media never touch anything else of ours.
+- The agent sends the gateway: your WireGuard **public** key, hostname,
+  Jellyfin version/name (from the public, unauthenticated info endpoint),
+  tunnel status, byte counters, and one upload-speed measurement. That's the
+  complete list — grep for `json:` in `internal/` to audit it.
+- The WireGuard **private key never leaves your machine**. It's stored in
+  the agent's state directory with owner-only permissions.
+
+This repo is open source (Apache-2.0) precisely so you don't have to take
+our word for any of the above.
+
+## Install
+
+You need a token from your [Tunnelo dashboard](https://api.tunnelo.io) first.
+It's used once, at registration.
+
+### Docker
+
+```sh
+docker run -d --name tunnelo-agent \
+  --cap-add=NET_ADMIN --device /dev/net/tun \
+  --restart unless-stopped \
+  -e TUNNELO_TOKEN=<your token> \
+  -e TUNNELO_JELLYFIN_URL=http://<jellyfin-host>:8096 \
+  -v tunnelo-agent:/var/lib/tunnelo-agent \
+  ghcr.io/abiteman/tunnelo-agent:latest
+```
+
+- `NET_ADMIN` + `/dev/net/tun` are required to create the WireGuard
+  interface — that's the only elevated access the container asks for. It is
+  **not** a privileged container.
+- Set `TUNNELO_JELLYFIN_URL` to wherever Jellyfin actually is — your host's
+  LAN IP if Jellyfin is another container (`http://192.168.1.50:8096`), or a
+  compose service name if they share a network.
+- The volume keeps your registration (credentials + private key) across
+  container updates.
+
+### Bare metal (systemd)
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/abiteman/tunnelo-agent/main/install.sh | sudo TUNNELO_TOKEN=<your token> sh
+```
+
+Installs `/usr/local/bin/tunnelo-agent` and a hardened systemd unit
+(capability bounding set reduced to `CAP_NET_ADMIN`). Re-run it any time to
+upgrade — an existing registration is never overwritten. Prefer to read
+before you pipe to shell? Good instinct: [`install.sh`](install.sh).
+
+### Unraid
+
+Search for **tunnelo-agent** in Community Applications (template in
+[`unraid/`](unraid/)), paste your token, and set the Jellyfin URL to your
+server's LAN IP, e.g. `http://192.168.1.100:8096`. The template presets the
+`NET_ADMIN` capability and `/dev/net/tun` device.
+
+## Configuration
+
+Every flag has an environment variable; flags win.
+
+| Flag | Env | Default | Purpose |
+|---|---|---|---|
+| `--token` | `TUNNELO_TOKEN` | — | One-time setup token (only until first registration) |
+| `--jellyfin-url` | `TUNNELO_JELLYFIN_URL` | `http://127.0.0.1:8096` | Where to reach Jellyfin |
+| `--gateway-url` | `TUNNELO_GATEWAY_URL` | `https://api.tunnelo.io` | Gateway API |
+| `--state-dir` | `TUNNELO_STATE_DIR` | `/var/lib/tunnelo-agent` | Credentials + private key |
+| `--interface` | `TUNNELO_INTERFACE` | `tunnelo0` | WireGuard interface name |
+| `--userspace` | `TUNNELO_USERSPACE` | `false` | Force userspace wireguard-go |
+| `--speedtest` | — | `false` | Re-run the upload speed test |
+| `--log-level` | `TUNNELO_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+
+## Troubleshooting
+
+- **"kernel WireGuard unavailable, using userspace wireguard-go"** — normal
+  on hosts without the kernel module; userspace mode is slightly slower but
+  fine for streaming.
+- **Remote playback buffers** — check the `upload speed test` line in the
+  agent logs. A 4K remux needs more upload bandwidth than most ISPs sell;
+  set Jellyfin's transcoding bitrate below your measured upload.
+- **"gateway revoked this agent"** — you regenerated the key from the
+  dashboard. Restart the agent with a fresh `TUNNELO_TOKEN`.
+- **Jellyfin shows unreachable** — the agent probes `TUNNELO_JELLYFIN_URL`
+  from *its own* network namespace; from inside Docker, `127.0.0.1` is the
+  agent container, not your host. Use the host's LAN IP.
+
+## Building from source
+
+```sh
+go build ./cmd/agent
+```
+
+Releases are built by [goreleaser](.goreleaser.yaml) via GitHub Actions:
+tagged versions publish static linux amd64/arm64 binaries and a multi-arch
+distroless image at `ghcr.io/abiteman/tunnelo-agent`.
+
+The gateway API this agent speaks is documented in
+[`docs/API.md`](docs/API.md).
+
+## License
+
+[Apache-2.0](LICENSE)
