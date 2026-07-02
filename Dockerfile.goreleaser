@@ -1,0 +1,6 @@
+# Used by goreleaser: copies the release binary it already built.
+# See Dockerfile for the required capabilities (NET_ADMIN, /dev/net/tun).
+FROM gcr.io/distroless/static-debian12:latest
+COPY tunnelo-agent /tunnelo-agent
+VOLUME /var/lib/tunnelo-agent
+ENTRYPOINT ["/tunnelo-agent"]
