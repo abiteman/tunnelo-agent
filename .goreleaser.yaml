@@ -1,0 +1,65 @@
+version: 2
+project_name: tunnelo-agent
+
+builds:
+  - main: ./cmd/agent
+    binary: tunnelo-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+dockers:
+  - image_templates:
+      - ghcr.io/abiteman/tunnelo-agent:{{ .Version }}-amd64
+    use: buildx
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - --platform=linux/amd64
+      - --label=org.opencontainers.image.source=https://github.com/abiteman/tunnelo-agent
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.licenses=Apache-2.0
+  - image_templates:
+      - ghcr.io/abiteman/tunnelo-agent:{{ .Version }}-arm64
+    goarch: arm64
+    use: buildx
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - --platform=linux/arm64
+      - --label=org.opencontainers.image.source=https://github.com/abiteman/tunnelo-agent
+      - --label=org.opencontainers.image.version={{ .Version }}
+      - --label=org.opencontainers.image.licenses=Apache-2.0
+
+docker_manifests:
+  - name_template: ghcr.io/abiteman/tunnelo-agent:{{ .Version }}
+    image_templates:
+      - ghcr.io/abiteman/tunnelo-agent:{{ .Version }}-amd64
+      - ghcr.io/abiteman/tunnelo-agent:{{ .Version }}-arm64
+  - name_template: ghcr.io/abiteman/tunnelo-agent:latest
+    image_templates:
+      - ghcr.io/abiteman/tunnelo-agent:{{ .Version }}-amd64
+      - ghcr.io/abiteman/tunnelo-agent:{{ .Version }}-arm64
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
