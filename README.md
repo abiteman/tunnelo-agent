@@ -141,6 +141,7 @@ Every flag has an environment variable; flags win.
 | `--gateway-url` | `TUNNELO_GATEWAY_URL` | `https://api.tunnelo.io` | Gateway API |
 | `--state-dir` | `TUNNELO_STATE_DIR` | `/var/lib/tunnelo-agent` | Credentials + private key |
 | `--interface` | `TUNNELO_INTERFACE` | `tunnelo0` | WireGuard interface name |
+| `--mtu` | `TUNNELO_MTU` | gateway-provided (1280) | Tunnel MTU override; lower it if pages/streams stall on a connected tunnel (MTU black hole) |
 | `--tunnel-mode` | `TUNNELO_TUNNEL_MODE` | `managed` | `external` = bring your own WireGuard |
 | `--wg-config-out` | `TUNNELO_WG_CONFIG_OUT` | `<state-dir>/tunnelo-wg.conf` | Where external mode writes the wg-quick config |
 | `--userspace` | `TUNNELO_USERSPACE` | `false` | Force userspace wireguard-go |

@@ -212,11 +212,22 @@ func detectJellyfin(ctx context.Context, prober *detect.Prober, log *slog.Logger
 }
 
 func buildTunnel(cfg *config.Config, state *register.State, log *slog.Logger) (string, *tunnel.Manager, error) {
+	// MTU: explicit override > registration value > conservative fallback.
+	// 1280 (IPv6 minimum) survives the CGNAT/464XLAT/PPPoE paths common on
+	// residential links, where WireGuard's usual 1420 silently black-holes
+	// full-size packets: handshakes pass, TCP data stalls.
+	mtu := cfg.MTU
+	if mtu == 0 {
+		mtu = state.WireGuard.MTU
+	}
+	if mtu == 0 {
+		mtu = 1280
+	}
 	tcfg := tunnel.Config{
 		InterfaceName:  cfg.Interface,
 		PrivateKey:     state.PrivateKey,
 		Address:        state.WireGuard.Address,
-		MTU:            state.WireGuard.MTU,
+		MTU:            mtu,
 		ForceUserspace: cfg.Userspace,
 		Peer: tunnel.PeerConfig{
 			PublicKey:           state.WireGuard.Peer.PublicKey,

@@ -21,6 +21,7 @@ type Config struct {
 	StateDir    string
 	JellyfinURL string
 	Interface   string
+	MTU         int    // 0 = use the registration's value (gateway-chosen)
 	TunnelMode  string // register.TunnelManaged or register.TunnelExternal
 	WgConfigOut string // where external mode writes the wg-quick config
 	Userspace   bool   // force userspace wireguard-go
@@ -46,6 +47,8 @@ func Load(args []string) (*Config, error) {
 		"where to reach the local Jellyfin server (env TUNNELO_JELLYFIN_URL)")
 	fs.StringVar(&cfg.Interface, "interface", envStr("TUNNELO_INTERFACE", "tunnelo0"),
 		"WireGuard interface name (env TUNNELO_INTERFACE)")
+	fs.IntVar(&cfg.MTU, "mtu", envInt("TUNNELO_MTU"),
+		"tunnel MTU override; 0 uses the gateway-provided value (env TUNNELO_MTU)")
 	fs.StringVar(&cfg.TunnelMode, "tunnel-mode", envStr("TUNNELO_TUNNEL_MODE", register.TunnelManaged),
 		"'managed' runs WireGuard itself; 'external' writes a wg-quick config for WireGuard you already run (env TUNNELO_TUNNEL_MODE)")
 	fs.StringVar(&cfg.WgConfigOut, "wg-config-out", envStr("TUNNELO_WG_CONFIG_OUT", ""),
@@ -69,6 +72,9 @@ func Load(args []string) (*Config, error) {
 	if cfg.TunnelMode != register.TunnelManaged && cfg.TunnelMode != register.TunnelExternal {
 		return nil, fmt.Errorf("invalid tunnel mode %q (want %q or %q)",
 			cfg.TunnelMode, register.TunnelManaged, register.TunnelExternal)
+	}
+	if cfg.MTU != 0 && (cfg.MTU < 576 || cfg.MTU > 1500) {
+		return nil, fmt.Errorf("invalid MTU %d (want 576-1500, or 0 for the gateway-provided value)", cfg.MTU)
 	}
 	return cfg, nil
 }
@@ -99,4 +105,12 @@ func envStr(key, fallback string) string {
 func envBool(key string) bool {
 	v, err := strconv.ParseBool(os.Getenv(key))
 	return err == nil && v
+}
+
+func envInt(key string) int {
+	n, err := strconv.Atoi(os.Getenv(key))
+	if err != nil {
+		return 0
+	}
+	return n
 }
