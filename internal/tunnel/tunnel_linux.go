@@ -144,7 +144,37 @@ func (d *linuxDevice) finishSetup() error {
 	if err != nil {
 		return fmt.Errorf("opening wgctrl: %w", err)
 	}
-	return d.configure()
+	if err := d.configure(); err != nil {
+		return err
+	}
+	return d.ensureRoutes()
+}
+
+// ensureRoutes installs kernel routes for the peer's allowed IPs. The
+// tunnel address is a /32, which creates no connected route — without
+// these, replies to gateway-originated traffic (the proxy dialing our
+// forwarder) leave via the default route instead of the tunnel, and the
+// gateway sees dial timeouts on an otherwise healthy handshake.
+func (d *linuxDevice) ensureRoutes() error {
+	link, err := netlink.LinkByName(d.name)
+	if err != nil {
+		return fmt.Errorf("looking up interface %s: %w", d.name, err)
+	}
+	for _, cidr := range d.cfg.Peer.AllowedIPs {
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return fmt.Errorf("parsing allowed IP %q: %w", cidr, err)
+		}
+		route := &netlink.Route{
+			LinkIndex: link.Attrs().Index,
+			Dst:       ipNet,
+			Scope:     netlink.SCOPE_LINK,
+		}
+		if err := netlink.RouteAdd(route); err != nil && !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("adding route %s dev %s: %w", cidr, d.name, err)
+		}
+	}
+	return nil
 }
 
 // configure (re)applies the full WireGuard config, resolving the gateway
@@ -193,7 +223,10 @@ func (d *linuxDevice) configure() error {
 }
 
 func (d *linuxDevice) RefreshPeer() error {
-	return d.configure()
+	if err := d.configure(); err != nil {
+		return err
+	}
+	return d.ensureRoutes()
 }
 
 func (d *linuxDevice) Stats() (Status, error) {
