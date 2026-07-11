@@ -16,10 +16,19 @@ import (
 
 // Config holds all agent settings.
 type Config struct {
-	Token       string // one-time user token; only needed until first registration
-	GatewayURL  string
-	StateDir    string
-	JellyfinURL string
+	Token      string // one-time user token; only needed until first registration
+	GatewayURL string
+	StateDir   string
+	// ServiceURL is the local HTTP service the tunnel exposes (Jellyfin by
+	// default, but any HTTP service works). TUNNELO_JELLYFIN_URL remains a
+	// supported alias.
+	ServiceURL string
+	// HealthPath is the path probed for generic reachability ("/" default);
+	// any HTTP answer counts as up.
+	HealthPath string
+	// ServiceType optionally names the service ("jellyfin", "navidrome", …)
+	// for dashboard display; empty = autodetect (jellyfin probe, else "http").
+	ServiceType string
 	Interface   string
 	MTU         int    // 0 = use the registration's value (gateway-chosen)
 	TunnelMode  string // register.TunnelManaged or register.TunnelExternal
@@ -43,8 +52,15 @@ func Load(args []string) (*Config, error) {
 		"gateway API base URL (env TUNNELO_GATEWAY_URL)")
 	fs.StringVar(&cfg.StateDir, "state-dir", envStr("TUNNELO_STATE_DIR", "/var/lib/tunnelo-agent"),
 		"directory for persisted state, including the WireGuard private key (env TUNNELO_STATE_DIR)")
-	fs.StringVar(&cfg.JellyfinURL, "jellyfin-url", envStr("TUNNELO_JELLYFIN_URL", "http://127.0.0.1:8096"),
-		"where to reach the local Jellyfin server (env TUNNELO_JELLYFIN_URL)")
+	serviceDefault := envStr("TUNNELO_SERVICE_URL", envStr("TUNNELO_JELLYFIN_URL", "http://127.0.0.1:8096"))
+	fs.StringVar(&cfg.ServiceURL, "service-url", serviceDefault,
+		"where to reach the local service the tunnel exposes (env TUNNELO_SERVICE_URL)")
+	fs.StringVar(&cfg.ServiceURL, "jellyfin-url", serviceDefault,
+		"deprecated alias for --service-url (env TUNNELO_JELLYFIN_URL)")
+	fs.StringVar(&cfg.HealthPath, "health-path", envStr("TUNNELO_HEALTH_PATH", "/"),
+		"path probed for reachability; any HTTP answer counts as up (env TUNNELO_HEALTH_PATH)")
+	fs.StringVar(&cfg.ServiceType, "service-type", envStr("TUNNELO_SERVICE_TYPE", ""),
+		"service name for dashboard display, e.g. jellyfin, navidrome; empty = autodetect (env TUNNELO_SERVICE_TYPE)")
 	fs.StringVar(&cfg.Interface, "interface", envStr("TUNNELO_INTERFACE", "tunnelo0"),
 		"WireGuard interface name (env TUNNELO_INTERFACE)")
 	fs.IntVar(&cfg.MTU, "mtu", envInt("TUNNELO_MTU"),
@@ -79,11 +95,11 @@ func Load(args []string) (*Config, error) {
 	return cfg, nil
 }
 
-// JellyfinHostPort returns the host:port the tunnel relay should dial.
-func (c *Config) JellyfinHostPort() (string, error) {
-	u, err := url.Parse(c.JellyfinURL)
+// ServiceHostPort returns the host:port the tunnel relay should dial.
+func (c *Config) ServiceHostPort() (string, error) {
+	u, err := url.Parse(c.ServiceURL)
 	if err != nil || u.Host == "" {
-		return "", fmt.Errorf("invalid Jellyfin URL %q", c.JellyfinURL)
+		return "", fmt.Errorf("invalid service URL %q", c.ServiceURL)
 	}
 	if u.Port() != "" {
 		return u.Host, nil

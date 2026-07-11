@@ -29,8 +29,17 @@ type TunnelStatus struct {
 }
 
 // JellyfinStatus mirrors the API contract's heartbeat jellyfin object.
+// Kept for gateways that predate the service-agnostic contract; it mirrors
+// ServiceStatus (version only when the service really is Jellyfin).
 type JellyfinStatus struct {
 	Reachable bool   `json:"reachable"`
+	Version   string `json:"version,omitempty"`
+}
+
+// ServiceStatus reports the exposed service's health, whatever it is.
+type ServiceStatus struct {
+	Reachable bool   `json:"reachable"`
+	Type      string `json:"type,omitempty"`
 	Version   string `json:"version,omitempty"`
 }
 
@@ -40,6 +49,7 @@ type JellyfinStatus struct {
 type Report struct {
 	AgentVersion string         `json:"agent_version"`
 	Tunnel       *TunnelStatus  `json:"tunnel,omitempty"`
+	Service      ServiceStatus  `json:"service"`
 	Jellyfin     JellyfinStatus `json:"jellyfin"`
 }
 
@@ -62,7 +72,7 @@ type Sender struct {
 	AgentVersion string
 	Interval     time.Duration
 	Tunnel       TunnelStatusSource // nil when the user brings their own WireGuard
-	Jellyfin     *detect.Prober
+	Service      *detect.Prober
 	Logger       *slog.Logger
 	HTTPClient   *http.Client
 }
@@ -101,7 +111,8 @@ func (s *Sender) Run(ctx context.Context) error {
 // beat gathers status and posts one heartbeat. The gateway may adjust the
 // interval in its response.
 func (s *Sender) beat(ctx context.Context) error {
-	report := Report{AgentVersion: s.AgentVersion, Tunnel: s.tunnelStatus(), Jellyfin: s.jellyfinStatus(ctx)}
+	svc, jf := s.serviceStatus(ctx)
+	report := Report{AgentVersion: s.AgentVersion, Tunnel: s.tunnelStatus(), Service: svc, Jellyfin: jf}
 
 	payload, err := json.Marshal(report)
 	if err != nil {
@@ -151,12 +162,18 @@ func (s *Sender) tunnelStatus() *TunnelStatus {
 	return ts
 }
 
-func (s *Sender) jellyfinStatus(ctx context.Context) JellyfinStatus {
+// serviceStatus probes the exposed service and renders both the modern
+// service block and the legacy jellyfin mirror (version only when the
+// service really is Jellyfin, so old dashboards never show a Navidrome
+// version as a Jellyfin one).
+func (s *Sender) serviceStatus(ctx context.Context) (ServiceStatus, JellyfinStatus) {
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	info, err := s.Jellyfin.Probe(probeCtx)
-	if err != nil {
-		return JellyfinStatus{Reachable: false}
+	res := s.Service.Probe(probeCtx)
+	svc := ServiceStatus{Reachable: res.Reachable, Type: res.Type, Version: res.Version}
+	jf := JellyfinStatus{Reachable: res.Reachable}
+	if res.Type == "jellyfin" {
+		jf.Version = res.Version
 	}
-	return JellyfinStatus{Reachable: true, Version: info.Version}
+	return svc, jf
 }

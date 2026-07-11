@@ -23,7 +23,7 @@ func newSender(t *testing.T, gatewayURL, jellyfinURL string) *Sender {
 		AgentVersion: "v0.1.0-test",
 		Interval:     10 * time.Millisecond,
 		Tunnel:       tunnel.NewManager(tunnel.Config{}, slog.Default()),
-		Jellyfin:     detect.New(jellyfinURL),
+		Service:      detect.New(jellyfinURL, "", ""),
 		Logger:       slog.Default(),
 	}
 }
@@ -76,6 +76,9 @@ func TestHeartbeatReportsStatus(t *testing.T) {
 	}
 	if !rep.Jellyfin.Reachable || rep.Jellyfin.Version != "10.10.3" {
 		t.Errorf("jellyfin status = %+v, want reachable 10.10.3", rep.Jellyfin)
+	}
+	if !rep.Service.Reachable || rep.Service.Type != "jellyfin" || rep.Service.Version != "10.10.3" {
+		t.Errorf("service status = %+v, want reachable jellyfin 10.10.3", rep.Service)
 	}
 	if rep.Tunnel.Up {
 		t.Errorf("tunnel.up = true for a tunnel that never came up")

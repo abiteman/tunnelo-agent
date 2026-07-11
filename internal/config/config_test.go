@@ -82,7 +82,7 @@ func TestLoadTunnelModes(t *testing.T) {
 	}
 }
 
-func TestJellyfinHostPort(t *testing.T) {
+func TestServiceHostPort(t *testing.T) {
 	tests := []struct {
 		url  string
 		want string
@@ -93,19 +93,44 @@ func TestJellyfinHostPort(t *testing.T) {
 		{"http://192.168.1.5:8920", "192.168.1.5:8920"},
 	}
 	for _, tt := range tests {
-		c := &Config{JellyfinURL: tt.url}
-		got, err := c.JellyfinHostPort()
+		c := &Config{ServiceURL: tt.url}
+		got, err := c.ServiceHostPort()
 		if err != nil {
-			t.Errorf("JellyfinHostPort(%q): %v", tt.url, err)
+			t.Errorf("ServiceHostPort(%q): %v", tt.url, err)
 			continue
 		}
 		if got != tt.want {
-			t.Errorf("JellyfinHostPort(%q) = %q, want %q", tt.url, got, tt.want)
+			t.Errorf("ServiceHostPort(%q) = %q, want %q", tt.url, got, tt.want)
 		}
 	}
 
-	c := &Config{JellyfinURL: "::bogus::"}
-	if _, err := c.JellyfinHostPort(); err == nil {
-		t.Error("JellyfinHostPort accepted bogus URL")
+	c := &Config{ServiceURL: "::bogus::"}
+	if _, err := c.ServiceHostPort(); err == nil {
+		t.Error("ServiceHostPort accepted bogus URL")
+	}
+}
+
+// Both the new --service-url flag and the legacy --jellyfin-url alias (and
+// their env vars) land in ServiceURL; TUNNELO_SERVICE_URL wins over
+// TUNNELO_JELLYFIN_URL.
+func TestServiceURLAliases(t *testing.T) {
+	cfg, err := Load([]string{"--service-url", "http://nas:4533"})
+	if err != nil || cfg.ServiceURL != "http://nas:4533" {
+		t.Errorf("service-url flag: %+v, %v", cfg, err)
+	}
+	cfg, err = Load([]string{"--jellyfin-url", "http://media:8096"})
+	if err != nil || cfg.ServiceURL != "http://media:8096" {
+		t.Errorf("jellyfin-url alias: %+v, %v", cfg, err)
+	}
+
+	t.Setenv("TUNNELO_JELLYFIN_URL", "http://old:8096")
+	cfg, _ = Load(nil)
+	if cfg.ServiceURL != "http://old:8096" {
+		t.Errorf("legacy env: ServiceURL = %q", cfg.ServiceURL)
+	}
+	t.Setenv("TUNNELO_SERVICE_URL", "http://new:4533")
+	cfg, _ = Load(nil)
+	if cfg.ServiceURL != "http://new:4533" {
+		t.Errorf("modern env should win: ServiceURL = %q", cfg.ServiceURL)
 	}
 }

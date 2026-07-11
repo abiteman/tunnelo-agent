@@ -62,7 +62,7 @@ docker run -d --name tunnelo-agent \
   --cap-add=NET_ADMIN --device /dev/net/tun \
   --restart unless-stopped \
   -e TUNNELO_TOKEN=<your token> \
-  -e TUNNELO_JELLYFIN_URL=http://<jellyfin-host>:8096 \
+  -e TUNNELO_SERVICE_URL=http://<service-host>:8096 \
   -v tunnelo-agent:/var/lib/tunnelo-agent \
   ghcr.io/abiteman/tunnelo-agent:latest
 ```
@@ -70,9 +70,12 @@ docker run -d --name tunnelo-agent \
 - `NET_ADMIN` + `/dev/net/tun` are required to create the WireGuard
   interface — that's the only elevated access the container asks for. It is
   **not** a privileged container.
-- Set `TUNNELO_JELLYFIN_URL` to wherever Jellyfin actually is — your host's
-  LAN IP if Jellyfin is another container (`http://192.168.1.50:8096`), or a
-  compose service name if they share a network.
+- Set `TUNNELO_SERVICE_URL` to wherever the service actually is — your host's
+  LAN IP if it runs in another container (`http://192.168.1.50:8096`), or a
+  compose service name if they share a network. Jellyfin is the default, but
+  any HTTP service works (Navidrome, Audiobookshelf, …); reachability counts
+  any HTTP answer, and Jellyfin additionally gets version detection.
+  (`TUNNELO_JELLYFIN_URL` still works as an alias.)
 - The volume keeps your registration (credentials + private key) across
   container updates.
 
@@ -105,7 +108,7 @@ docker run -d --name tunnelo-agent \
   --restart unless-stopped \
   -e TUNNELO_TOKEN=<your token> \
   -e TUNNELO_TUNNEL_MODE=external \
-  -e TUNNELO_JELLYFIN_URL=http://<jellyfin-host>:8096 \
+  -e TUNNELO_SERVICE_URL=http://<service-host>:8096 \
   -v tunnelo-agent:/var/lib/tunnelo-agent \
   ghcr.io/abiteman/tunnelo-agent:latest
 ```
@@ -137,7 +140,9 @@ Every flag has an environment variable; flags win.
 | Flag | Env | Default | Purpose |
 |---|---|---|---|
 | `--token` | `TUNNELO_TOKEN` | — | One-time setup token (only until first registration) |
-| `--jellyfin-url` | `TUNNELO_JELLYFIN_URL` | `http://127.0.0.1:8096` | Where to reach Jellyfin |
+| `--service-url` | `TUNNELO_SERVICE_URL` | `http://127.0.0.1:8096` | Where to reach the exposed service (`TUNNELO_JELLYFIN_URL` is a working alias) |
+| `--health-path` | `TUNNELO_HEALTH_PATH` | `/` | Path probed for reachability; any HTTP answer counts as up |
+| `--service-type` | `TUNNELO_SERVICE_TYPE` | autodetect | Display name for the dashboard (`jellyfin`, `navidrome`, …) |
 | `--gateway-url` | `TUNNELO_GATEWAY_URL` | `https://api.tunnelo.io` | Gateway API |
 | `--state-dir` | `TUNNELO_STATE_DIR` | `/var/lib/tunnelo-agent` | Credentials + private key |
 | `--interface` | `TUNNELO_INTERFACE` | `tunnelo0` | WireGuard interface name |
@@ -158,10 +163,10 @@ Every flag has an environment variable; flags win.
   set Jellyfin's transcoding bitrate below your measured upload.
 - **"gateway revoked this agent"** — you regenerated the key from the
   dashboard. Restart the agent with a fresh `TUNNELO_TOKEN`.
-- **Jellyfin shows unreachable** — the agent probes `TUNNELO_JELLYFIN_URL`
+- **Service shows unreachable** — the agent probes `TUNNELO_SERVICE_URL`
   from *its own* network namespace; from inside Docker, `127.0.0.1` is the
   agent container, not your host. Use the host's LAN IP.
-- **Changed Jellyfin's port?** Set `TUNNELO_JELLYFIN_URL` to match (e.g.
+- **Changed the service's port?** Set `TUNNELO_SERVICE_URL` to match (e.g.
   `http://127.0.0.1:9096`). Your public subdomain is unaffected — the agent
   bridges the gateway's port to wherever Jellyfin actually listens.
 

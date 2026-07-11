@@ -67,6 +67,12 @@ Request:
   "hostname": "media-box",
   "agent_version": "v0.1.0",
   "tunnel_mode": "managed",
+  "service": {
+    "type": "jellyfin",
+    "detected": true,
+    "version": "10.10.3",
+    "name": "Living Room"
+  },
   "jellyfin": {
     "detected": true,
     "version": "10.10.3",
@@ -76,11 +82,16 @@ Request:
 }
 ```
 
-`jellyfin` is best-effort detection at startup and may be `null`.
+`service` describes whatever HTTP service the tunnel exposes: `type` is
+`"jellyfin"` when the Jellyfin probe succeeded, the operator-declared
+`TUNNELO_SERVICE_TYPE`, or `"http"` for anything else that answered.
+`jellyfin` is the legacy mirror of the same detection (fully populated only
+when the service really is Jellyfin) — kept so old gateways keep working;
+both blocks are best-effort and may be `null`.
 
 `tunnel_mode` is `"managed"` (the agent runs WireGuard itself, default) or
 `"external"` (the user carries the peer on WireGuard they already run; the
-agent renders a wg-quick config and only reports Jellyfin health). The
+agent renders a wg-quick config and only reports service health). The
 gateway can use this to tailor dashboard setup hints.
 
 Response `200`:
@@ -92,7 +103,7 @@ Response `200`:
   "subdomain": "quiet-falcon",
   "wireguard": {
     "address": "10.77.0.42/32",
-    "mtu": 1420,
+    "mtu": 1280,
     "peer": {
       "public_key": "base64 gateway public key",
       "endpoint": "wg.<ourdomain>:51820",
@@ -139,6 +150,11 @@ Request:
     "rx_bytes": 1048576,
     "tx_bytes": 4194304
   },
+  "service": {
+    "reachable": true,
+    "type": "jellyfin",
+    "version": "10.10.3"
+  },
   "jellyfin": {
     "reachable": true,
     "version": "10.10.3"
@@ -147,8 +163,10 @@ Request:
 ```
 
 `tunnel.up` means a WireGuard handshake completed within the last 3 minutes.
-The gateway uses `jellyfin.reachable` to serve a friendly "server offline"
-page instead of a proxy timeout.
+The gateway prefers `service.reachable` (falling back to the legacy
+`jellyfin.reachable` mirror from older agents) to serve a friendly "server
+offline" page instead of a proxy timeout. Reachability counts ANY HTTP
+answer on the health path — a 401 from a service with auth is up.
 
 `tunnel` is **omitted** in external tunnel mode: the gateway terminates the
 tunnel, so its own peer table (last handshake, byte counters) is the

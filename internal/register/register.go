@@ -14,12 +14,23 @@ import (
 )
 
 // JellyfinInfo is the best-effort local Jellyfin detection result included
-// in the registration request.
+// in the registration request. Kept alongside ServiceInfo for gateways that
+// predate the service-agnostic contract.
 type JellyfinInfo struct {
 	Detected   bool   `json:"detected"`
 	Version    string `json:"version,omitempty"`
 	ServerName string `json:"server_name,omitempty"`
 	ServerID   string `json:"server_id,omitempty"`
+}
+
+// ServiceInfo describes whatever HTTP service the tunnel exposes —
+// "jellyfin" when the Jellyfin probe succeeds, the operator-declared type,
+// or "http" for anything else that answered.
+type ServiceInfo struct {
+	Type     string `json:"type"`
+	Detected bool   `json:"detected"`
+	Version  string `json:"version,omitempty"`
+	Name     string `json:"name,omitempty"`
 }
 
 // Request is the body of POST /v1/agents/register.
@@ -28,6 +39,7 @@ type Request struct {
 	Hostname     string        `json:"hostname"`
 	AgentVersion string        `json:"agent_version"`
 	TunnelMode   string        `json:"tunnel_mode"` // TunnelManaged or TunnelExternal
+	Service      *ServiceInfo  `json:"service,omitempty"`
 	Jellyfin     *JellyfinInfo `json:"jellyfin"`
 }
 

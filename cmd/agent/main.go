@@ -50,14 +50,14 @@ func main() {
 func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	log.Info("tunnelo agent starting", "version", version, "gateway", cfg.GatewayURL)
 
-	jellyfin := detect.New(cfg.JellyfinURL)
+	service := detect.New(cfg.ServiceURL, cfg.HealthPath, cfg.ServiceType)
 
 	state, err := register.LoadState(cfg.StateDir)
 	if err != nil {
 		return err
 	}
 	if state == nil {
-		if state, err = registerAgent(ctx, cfg, jellyfin, log); err != nil {
+		if state, err = registerAgent(ctx, cfg, service, log); err != nil {
 			return err
 		}
 	} else {
@@ -81,13 +81,13 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		tunnelSource = manager
 		group.Go(func() error { return manager.Run(ctx) })
 
-		jellyfinAddr, err := cfg.JellyfinHostPort()
+		serviceAddr, err := cfg.ServiceHostPort()
 		if err != nil {
 			return err
 		}
 		forwarder := &tunnel.Forwarder{
 			ListenAddr: fmt.Sprintf("%s:%d", tunnelIP, servicePort(state)),
-			TargetAddr: jellyfinAddr,
+			TargetAddr: serviceAddr,
 			Logger:     log,
 		}
 		group.Go(func() error { return forwarder.Run(ctx) })
@@ -100,7 +100,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		AgentVersion: version,
 		Interval:     time.Duration(state.HeartbeatInterval) * time.Second,
 		Tunnel:       tunnelSource,
-		Jellyfin:     jellyfin,
+		Service:      service,
 		Logger:       log,
 	}
 	group.Go(func() error {
@@ -128,7 +128,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 
 // registerAgent generates a keypair and exchanges the user token for a
 // tunnel configuration, retrying transient gateway errors with backoff.
-func registerAgent(ctx context.Context, cfg *config.Config, jellyfin *detect.Prober, log *slog.Logger) (*register.State, error) {
+func registerAgent(ctx context.Context, cfg *config.Config, service *detect.Prober, log *slog.Logger) (*register.State, error) {
 	if cfg.Token == "" {
 		return nil, errors.New("not registered yet: set TUNNELO_TOKEN (or --token) to the token from your Tunnelo dashboard")
 	}
@@ -138,11 +138,13 @@ func registerAgent(ctx context.Context, cfg *config.Config, jellyfin *detect.Pro
 		return nil, fmt.Errorf("generating WireGuard keypair: %w", err)
 	}
 
+	svc, jf := detectService(ctx, service, log)
 	req := register.Request{
 		PublicKey:    key.PublicKey().String(),
 		AgentVersion: version,
 		TunnelMode:   cfg.TunnelMode,
-		Jellyfin:     detectJellyfin(ctx, jellyfin, log),
+		Service:      svc,
+		Jellyfin:     jf,
 	}
 	if req.Hostname, err = os.Hostname(); err != nil {
 		req.Hostname = "unknown"
@@ -194,21 +196,24 @@ func registerAgent(ctx context.Context, cfg *config.Config, jellyfin *detect.Pro
 	return state, nil
 }
 
-func detectJellyfin(ctx context.Context, prober *detect.Prober, log *slog.Logger) *register.JellyfinInfo {
+// detectService probes the exposed service once for the registration
+// request, rendering both the modern service block and the legacy jellyfin
+// mirror (populated fully only when the service really is Jellyfin).
+func detectService(ctx context.Context, prober *detect.Prober, log *slog.Logger) (*register.ServiceInfo, *register.JellyfinInfo) {
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	info, err := prober.Probe(probeCtx)
-	if err != nil {
-		log.Warn("jellyfin not detected (will keep checking via heartbeat)", "url", prober.BaseURL, "error", err)
-		return &register.JellyfinInfo{Detected: false}
+	res := prober.Probe(probeCtx)
+	if !res.Reachable {
+		log.Warn("service not detected (will keep checking via heartbeat)", "url", prober.BaseURL, "error", res.Err)
+		return &register.ServiceInfo{Type: res.Type}, &register.JellyfinInfo{Detected: false}
 	}
-	log.Info("jellyfin detected", "version", info.Version, "server_name", info.ServerName)
-	return &register.JellyfinInfo{
-		Detected:   true,
-		Version:    info.Version,
-		ServerName: info.ServerName,
-		ServerID:   info.ID,
+	log.Info("service detected", "type", res.Type, "version", res.Version, "name", res.ServerName)
+	svc := &register.ServiceInfo{Type: res.Type, Detected: true, Version: res.Version, Name: res.ServerName}
+	jf := &register.JellyfinInfo{Detected: res.Type == "jellyfin"}
+	if res.Type == "jellyfin" {
+		jf.Version, jf.ServerName, jf.ServerID = res.Version, res.ServerName, res.ID
 	}
+	return svc, jf
 }
 
 func buildTunnel(cfg *config.Config, state *register.State, log *slog.Logger) (string, *tunnel.Manager, error) {
