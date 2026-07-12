@@ -73,8 +73,12 @@ type Sender struct {
 	Interval     time.Duration
 	Tunnel       TunnelStatusSource // nil when the user brings their own WireGuard
 	Service      *detect.Prober
-	Logger       *slog.Logger
-	HTTPClient   *http.Client
+	// OnSpeedtestRequest fires when a heartbeat response carries
+	// run_speedtest: true (the dashboard's re-run button). Must not block:
+	// the sender calls it inline between beats.
+	OnSpeedtestRequest func()
+	Logger             *slog.Logger
+	HTTPClient         *http.Client
 }
 
 // Run sends heartbeats until ctx is cancelled. Transient failures are logged
@@ -142,10 +146,16 @@ func (s *Sender) beat(ctx context.Context) error {
 	}
 
 	var out struct {
-		HeartbeatInterval int `json:"heartbeat_interval_seconds"`
+		HeartbeatInterval int  `json:"heartbeat_interval_seconds"`
+		RunSpeedtest      bool `json:"run_speedtest"`
 	}
-	if err := json.Unmarshal(body, &out); err == nil && out.HeartbeatInterval > 0 {
-		s.Interval = time.Duration(out.HeartbeatInterval) * time.Second
+	if err := json.Unmarshal(body, &out); err == nil {
+		if out.HeartbeatInterval > 0 {
+			s.Interval = time.Duration(out.HeartbeatInterval) * time.Second
+		}
+		if out.RunSpeedtest && s.OnSpeedtestRequest != nil {
+			s.OnSpeedtestRequest()
+		}
 	}
 	return nil
 }

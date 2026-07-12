@@ -94,7 +94,9 @@ both blocks are best-effort and may be `null`.
 agent renders a wg-quick config and only reports service health). The
 gateway can use this to tailor dashboard setup hints.
 
-Response `200`:
+Response `200` (`run_speedtest` appears when the dashboard requested a
+re-run of the upload test; the agent runs it once — single-flight — and
+reports via the speedtest endpoint):
 
 ```json
 {
@@ -176,7 +178,7 @@ even in managed mode.
 Response `200`:
 
 ```json
-{ "heartbeat_interval_seconds": 30 }
+{ "heartbeat_interval_seconds": 30, "run_speedtest": true }
 ```
 
 ## Upload speed test

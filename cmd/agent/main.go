@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -93,6 +94,9 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		group.Go(func() error { return forwarder.Run(ctx) })
 	}
 
+	// Dashboard-requested speed test re-runs arrive via heartbeat
+	// responses; single-flight so a duplicate request can't stack tests.
+	var speedtestRunning atomic.Bool
 	sender := &heartbeat.Sender{
 		GatewayURL:   cfg.GatewayURL,
 		AgentID:      state.AgentID,
@@ -101,7 +105,17 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		Interval:     time.Duration(state.HeartbeatInterval) * time.Second,
 		Tunnel:       tunnelSource,
 		Service:      service,
-		Logger:       log,
+		OnSpeedtestRequest: func() {
+			if !speedtestRunning.CompareAndSwap(false, true) {
+				return
+			}
+			log.Info("speed test re-run requested from dashboard")
+			go func() {
+				defer speedtestRunning.Store(false)
+				runSpeedtest(ctx, cfg, state, log)
+			}()
+		},
+		Logger: log,
 	}
 	group.Go(func() error {
 		err := sender.Run(ctx)

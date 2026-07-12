@@ -206,3 +206,39 @@ func TestHeartbeatSurvivesTransientErrors(t *testing.T) {
 		t.Fatal("heartbeat loop did not survive a transient error")
 	}
 }
+
+// run_speedtest in a heartbeat response fires the callback; ordinary
+// responses don't.
+func TestHeartbeatSpeedtestRequest(t *testing.T) {
+	responses := make(chan string, 2)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case body := <-responses:
+			w.Write([]byte(body))
+		default:
+			w.Write([]byte(`{}`))
+		}
+	}))
+	defer gateway.Close()
+	responses <- `{"heartbeat_interval_seconds": 1, "run_speedtest": true}`
+	responses <- `{"heartbeat_interval_seconds": 1}`
+
+	fired := make(chan struct{}, 4)
+	s := newSender(t, gateway.URL, "http://127.0.0.1:1")
+	s.OnSpeedtestRequest = func() { fired <- struct{}{} }
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.Run(ctx)
+
+	select {
+	case <-fired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("callback not fired for run_speedtest response")
+	}
+	// The follow-up response has no run_speedtest — no second firing.
+	select {
+	case <-fired:
+		t.Fatal("callback fired for a response without run_speedtest")
+	case <-time.After(300 * time.Millisecond):
+	}
+}
