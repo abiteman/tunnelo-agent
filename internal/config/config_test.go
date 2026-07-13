@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"strconv"
 	"testing"
 
 	"github.com/abiteman/tunnelo-agent/internal/register"
@@ -82,33 +83,72 @@ func TestLoadTunnelModes(t *testing.T) {
 	}
 }
 
-func TestServiceHostPort(t *testing.T) {
+// A single ServiceURL yields a one-entry service list (host:port derived).
+func TestSingleServiceFromURL(t *testing.T) {
 	tests := []struct {
 		url  string
-		want string
+		host string
+		port int
 	}{
-		{"http://127.0.0.1:8096", "127.0.0.1:8096"},
-		{"http://media", "media:80"},
-		{"https://media", "media:443"},
-		{"http://192.168.1.5:8920", "192.168.1.5:8920"},
+		{"http://127.0.0.1:8096", "127.0.0.1", 8096},
+		{"http://media", "media", 80},
+		{"https://media", "media", 443},
+		{"http://192.168.1.5:8920", "192.168.1.5", 8920},
 	}
 	for _, tt := range tests {
-		c := &Config{ServiceURL: tt.url}
-		got, err := c.ServiceHostPort()
+		cfg, err := Load([]string{"--service-url", tt.url})
 		if err != nil {
-			t.Errorf("ServiceHostPort(%q): %v", tt.url, err)
+			t.Errorf("Load(%q): %v", tt.url, err)
 			continue
 		}
-		if got != tt.want {
-			t.Errorf("ServiceHostPort(%q) = %q, want %q", tt.url, got, tt.want)
+		if len(cfg.Services) != 1 {
+			t.Errorf("%q: got %d services, want 1", tt.url, len(cfg.Services))
+			continue
+		}
+		s := cfg.Services[0]
+		if s.Host != tt.host || s.Port != tt.port {
+			t.Errorf("%q -> %s:%d, want %s:%d", tt.url, s.Host, s.Port, tt.host, tt.port)
+		}
+	}
+}
+
+// TUNNELO_SERVICES parses full host:port entries and the bare-port shorthand
+// (bare ports inherit the preceding host), primary first.
+func TestParseServices(t *testing.T) {
+	specs, err := parseServices("192.168.1.5:8096,7878,8989", "/")
+	if err != nil {
+		t.Fatalf("parseServices: %v", err)
+	}
+	want := []ServiceSpec{
+		{Host: "192.168.1.5", Port: 8096},
+		{Host: "192.168.1.5", Port: 7878},
+		{Host: "192.168.1.5", Port: 8989},
+	}
+	if len(specs) != len(want) {
+		t.Fatalf("got %d specs, want %d", len(specs), len(want))
+	}
+	for i, w := range want {
+		if specs[i].Host != w.Host || specs[i].Port != w.Port {
+			t.Errorf("spec[%d] = %s:%d, want %s:%d", i, specs[i].Host, specs[i].Port, w.Host, w.Port)
+		}
+		if specs[i].URL != "http://"+w.Host+":"+itoa(w.Port) {
+			t.Errorf("spec[%d] URL = %q", i, specs[i].URL)
 		}
 	}
 
-	c := &Config{ServiceURL: "::bogus::"}
-	if _, err := c.ServiceHostPort(); err == nil {
-		t.Error("ServiceHostPort accepted bogus URL")
+	// Mixed full host:port entries keep their own hosts.
+	specs, err = parseServices("10.0.0.1:8096,10.0.0.2:7878", "/")
+	if err != nil || len(specs) != 2 || specs[1].Host != "10.0.0.2" || specs[1].Port != 7878 {
+		t.Fatalf("mixed hosts: %+v err=%v", specs, err)
+	}
+
+	// A leading bare port has no host to inherit.
+	if _, err := parseServices("7878,8989", "/"); err == nil {
+		t.Error("bare leading port should error (no preceding host:port)")
 	}
 }
+
+func itoa(n int) string { return strconv.Itoa(n) }
 
 // Both the new --service-url flag and the legacy --jellyfin-url alias (and
 // their env vars) land in ServiceURL; TUNNELO_SERVICE_URL wins over

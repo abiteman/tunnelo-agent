@@ -48,21 +48,43 @@ func main() {
 	log.Info("agent stopped")
 }
 
-func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
-	log.Info("tunnelo agent starting", "version", version, "gateway", cfg.GatewayURL)
+// runService is one resolved service at runtime: the local spec joined with
+// the gateway's subdomain/name assignment, plus its prober.
+type runService struct {
+	spec   config.ServiceSpec
+	name   string
+	sub    string
+	prober *detect.Prober
+}
 
-	service := detect.New(cfg.ServiceURL, cfg.HealthPath, cfg.ServiceType)
+func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
+	log.Info("tunnelo agent starting", "version", version, "gateway", cfg.GatewayURL, "services", len(cfg.Services))
 
 	state, err := register.LoadState(cfg.StateDir)
 	if err != nil {
 		return err
 	}
-	if state == nil {
-		if state, err = registerAgent(ctx, cfg, service, log); err != nil {
+	switch {
+	case state == nil:
+		if state, err = registerAgent(ctx, cfg, nil, log); err != nil {
 			return err
 		}
-	} else {
-		log.Info("using existing registration", "agent_id", state.AgentID, "subdomain", state.Subdomain)
+	case !samePorts(state.Ports(), specPorts(cfg.Services)):
+		// The configured service set changed: re-register (reusing the existing
+		// key so the tunnel doesn't reset) to pick up added/removed services.
+		log.Info("service set changed since last run; re-registering",
+			"was", state.Ports(), "now", specPorts(cfg.Services))
+		if state, err = registerAgent(ctx, cfg, state, log); err != nil {
+			return err
+		}
+	default:
+		log.Info("using existing registration", "agent_id", state.AgentID,
+			"subdomain", state.Subdomain, "services", len(state.Services))
+	}
+
+	services, err := buildServices(cfg, state)
+	if err != nil {
+		return err
 	}
 
 	group, ctx := errgroup.WithContext(ctx)
@@ -82,21 +104,25 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		tunnelSource = manager
 		group.Go(func() error { return manager.Run(ctx) })
 
-		serviceAddr, err := cfg.ServiceHostPort()
-		if err != nil {
-			return err
+		// One forwarder per service: the tunnel-side listen port equals the
+		// service's local port, and each dials its own local target.
+		for _, sv := range services {
+			forwarder := &tunnel.Forwarder{
+				ListenAddr: fmt.Sprintf("%s:%d", tunnelIP, sv.spec.Port),
+				TargetAddr: fmt.Sprintf("%s:%d", sv.spec.Host, sv.spec.Port),
+				Logger:     log.With("service", sv.name, "subdomain", sv.sub),
+			}
+			group.Go(func() error { return forwarder.Run(ctx) })
 		}
-		forwarder := &tunnel.Forwarder{
-			ListenAddr: fmt.Sprintf("%s:%d", tunnelIP, servicePort(state)),
-			TargetAddr: serviceAddr,
-			Logger:     log,
-		}
-		group.Go(func() error { return forwarder.Run(ctx) })
 	}
 
 	// Dashboard-requested speed test re-runs arrive via heartbeat
 	// responses; single-flight so a duplicate request can't stack tests.
 	var speedtestRunning atomic.Bool
+	hbServices := make([]heartbeat.Service, 0, len(services))
+	for _, sv := range services {
+		hbServices = append(hbServices, heartbeat.Service{Name: sv.name, Prober: sv.prober})
+	}
 	sender := &heartbeat.Sender{
 		GatewayURL:   cfg.GatewayURL,
 		AgentID:      state.AgentID,
@@ -104,7 +130,7 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		AgentVersion: version,
 		Interval:     time.Duration(state.HeartbeatInterval) * time.Second,
 		Tunnel:       tunnelSource,
-		Service:      service,
+		Services:     hbServices,
 		OnSpeedtestRequest: func() {
 			if !speedtestRunning.CompareAndSwap(false, true) {
 				return
@@ -136,41 +162,118 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		})
 	}
 
-	log.Info("agent running", "subdomain", state.Subdomain)
+	log.Info("agent running", "subdomain", state.Subdomain, "services", len(services))
 	return group.Wait()
 }
 
-// registerAgent generates a keypair and exchanges the user token for a
-// tunnel configuration, retrying transient gateway errors with backoff.
-func registerAgent(ctx context.Context, cfg *config.Config, service *detect.Prober, log *slog.Logger) (*register.State, error) {
+// buildServices joins the gateway's per-service assignments (state) with the
+// local specs (config) by port, building each service's prober.
+func buildServices(cfg *config.Config, state *register.State) ([]runService, error) {
+	byPort := make(map[int]config.ServiceSpec, len(cfg.Services))
+	for _, sp := range cfg.Services {
+		byPort[sp.Port] = sp
+	}
+	out := make([]runService, 0, len(state.Services))
+	for _, ss := range state.Services {
+		sp, ok := byPort[ss.Port]
+		if !ok {
+			// A port-set change triggers re-registration, so state and config
+			// normally agree; skip anything stale defensively.
+			continue
+		}
+		out = append(out, runService{
+			spec:   sp,
+			name:   ss.Name,
+			sub:    ss.Subdomain,
+			prober: detect.New(sp.URL, sp.HealthPath, sp.Type),
+		})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no services resolved from the registration")
+	}
+	return out, nil
+}
+
+// registerAgent exchanges the user token for a tunnel configuration, retrying
+// transient gateway errors with backoff. When prev is non-nil the existing
+// WireGuard key is reused (a re-registration for a changed service set must
+// not reset the tunnel).
+func registerAgent(ctx context.Context, cfg *config.Config, prev *register.State, log *slog.Logger) (*register.State, error) {
 	if cfg.Token == "" {
 		return nil, errors.New("not registered yet: set TUNNELO_TOKEN (or --token) to the token from your Tunnelo dashboard")
 	}
 
-	key, err := wgtypes.GeneratePrivateKey()
+	key, err := registrationKey(prev)
 	if err != nil {
-		return nil, fmt.Errorf("generating WireGuard keypair: %w", err)
+		return nil, err
 	}
 
-	svc, jf := detectService(ctx, service, log)
+	reports := make([]register.ServiceReport, 0, len(cfg.Services))
+	for _, sp := range cfg.Services {
+		res := detectOne(ctx, sp, log)
+		reports = append(reports, register.ServiceReport{
+			Port: sp.Port, Type: res.Type, Detected: res.Reachable, Version: res.Version,
+		})
+	}
 	req := register.Request{
 		PublicKey:    key.PublicKey().String(),
 		AgentVersion: version,
 		TunnelMode:   cfg.TunnelMode,
-		Service:      svc,
-		Jellyfin:     jf,
+		Services:     reports,
 	}
 	if req.Hostname, err = os.Hostname(); err != nil {
 		req.Hostname = "unknown"
 	}
 
+	resp, err := registerWithRetry(ctx, cfg, req, log)
+	if err != nil {
+		return nil, err
+	}
+
+	state := &register.State{
+		AgentID:           resp.AgentID,
+		AgentSecret:       resp.AgentSecret,
+		Subdomain:         resp.Subdomain,
+		PrivateKey:        key.String(),
+		WireGuard:         resp.WireGuard,
+		ServicePort:       resp.ServicePort,
+		Services:          serviceStates(resp),
+		HeartbeatInterval: resp.HeartbeatInterval,
+		Speedtest:         resp.Speedtest,
+	}
+	if err := state.Save(cfg.StateDir); err != nil {
+		return nil, err
+	}
+	log.Info("registered with gateway", "agent_id", state.AgentID,
+		"subdomain", state.Subdomain, "services", len(state.Services))
+	return state, nil
+}
+
+// registrationKey reuses prev's key (no tunnel reset on re-register) or
+// generates a fresh one.
+func registrationKey(prev *register.State) (wgtypes.Key, error) {
+	if prev != nil && prev.PrivateKey != "" {
+		key, err := wgtypes.ParseKey(prev.PrivateKey)
+		if err != nil {
+			return wgtypes.Key{}, fmt.Errorf("parsing existing WireGuard key: %w", err)
+		}
+		return key, nil
+	}
+	key, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		return wgtypes.Key{}, fmt.Errorf("generating WireGuard keypair: %w", err)
+	}
+	return key, nil
+}
+
+// registerWithRetry posts the registration, retrying transient errors.
+func registerWithRetry(ctx context.Context, cfg *config.Config, req register.Request, log *slog.Logger) (*register.Response, error) {
 	client := register.NewClient(cfg.GatewayURL)
 	backoff := 2 * time.Second
-	var resp *register.Response
 	for {
-		resp, err = client.Register(ctx, cfg.Token, req)
+		resp, err := client.Register(ctx, cfg.Token, req)
 		if err == nil {
-			break
+			return resp, nil
 		}
 		var apiErr *register.APIError
 		if errors.As(err, &apiErr) {
@@ -192,42 +295,62 @@ func registerAgent(ctx context.Context, cfg *config.Config, service *detect.Prob
 		}
 		backoff = min(backoff*2, time.Minute)
 	}
-
-	state := &register.State{
-		AgentID:           resp.AgentID,
-		AgentSecret:       resp.AgentSecret,
-		Subdomain:         resp.Subdomain,
-		PrivateKey:        key.String(),
-		WireGuard:         resp.WireGuard,
-		ServicePort:       resp.ServicePort,
-		HeartbeatInterval: resp.HeartbeatInterval,
-		Speedtest:         resp.Speedtest,
-	}
-	if err := state.Save(cfg.StateDir); err != nil {
-		return nil, err
-	}
-	log.Info("registered with gateway", "agent_id", state.AgentID, "subdomain", state.Subdomain)
-	return state, nil
 }
 
-// detectService probes the exposed service once for the registration
-// request, rendering both the modern service block and the legacy jellyfin
-// mirror (populated fully only when the service really is Jellyfin).
-func detectService(ctx context.Context, prober *detect.Prober, log *slog.Logger) (*register.ServiceInfo, *register.JellyfinInfo) {
+// serviceStates maps the registration response's service assignments to
+// persisted state, synthesizing a single primary from the top-level fields if
+// the gateway returned no services array.
+func serviceStates(resp *register.Response) []register.ServiceState {
+	if len(resp.Services) == 0 {
+		return []register.ServiceState{{Name: resp.Subdomain, Subdomain: resp.Subdomain, Port: resp.ServicePort}}
+	}
+	out := make([]register.ServiceState, 0, len(resp.Services))
+	for _, s := range resp.Services {
+		out = append(out, register.ServiceState{Name: s.Name, Subdomain: s.Subdomain, Port: s.ServicePort})
+	}
+	return out
+}
+
+// detectOne probes one service for the registration request.
+func detectOne(ctx context.Context, sp config.ServiceSpec, log *slog.Logger) detect.Result {
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	res := prober.Probe(probeCtx)
-	if !res.Reachable {
-		log.Warn("service not detected (will keep checking via heartbeat)", "url", prober.BaseURL, "error", res.Err)
-		return &register.ServiceInfo{Type: res.Type}, &register.JellyfinInfo{Detected: false}
+	res := detect.New(sp.URL, sp.HealthPath, sp.Type).Probe(probeCtx)
+	if res.Reachable {
+		log.Info("service detected", "url", sp.URL, "type", res.Type, "version", res.Version)
+	} else {
+		log.Warn("service not detected (will keep checking via heartbeat)", "url", sp.URL, "error", res.Err)
 	}
-	log.Info("service detected", "type", res.Type, "version", res.Version, "name", res.ServerName)
-	svc := &register.ServiceInfo{Type: res.Type, Detected: true, Version: res.Version, Name: res.ServerName}
-	jf := &register.JellyfinInfo{Detected: res.Type == "jellyfin"}
-	if res.Type == "jellyfin" {
-		jf.Version, jf.ServerName, jf.ServerID = res.Version, res.ServerName, res.ID
+	return res
+}
+
+// samePorts reports whether two port sets are equal regardless of order.
+func samePorts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
 	}
-	return svc, jf
+	seen := make(map[int]int, len(a))
+	for _, p := range a {
+		seen[p]++
+	}
+	for _, p := range b {
+		seen[p]--
+	}
+	for _, n := range seen {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// specPorts returns the local ports of the configured services.
+func specPorts(specs []config.ServiceSpec) []int {
+	ports := make([]int, 0, len(specs))
+	for _, sp := range specs {
+		ports = append(ports, sp.Port)
+	}
+	return ports
 }
 
 func buildTunnel(cfg *config.Config, state *register.State, log *slog.Logger) (string, *tunnel.Manager, error) {

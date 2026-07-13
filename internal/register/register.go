@@ -13,34 +13,23 @@ import (
 	"time"
 )
 
-// JellyfinInfo is the best-effort local Jellyfin detection result included
-// in the registration request. Kept alongside ServiceInfo for gateways that
-// predate the service-agnostic contract.
-type JellyfinInfo struct {
-	Detected   bool   `json:"detected"`
-	Version    string `json:"version,omitempty"`
-	ServerName string `json:"server_name,omitempty"`
-	ServerID   string `json:"server_id,omitempty"`
-}
-
-// ServiceInfo describes whatever HTTP service the tunnel exposes —
-// "jellyfin" when the Jellyfin probe succeeds, the operator-declared type,
-// or "http" for anything else that answered.
-type ServiceInfo struct {
-	Type     string `json:"type"`
+// ServiceReport is one detected service in a registration request. Port is the
+// local port (reused tunnel-side); the gateway assigns the subdomain and name.
+type ServiceReport struct {
+	Port     int    `json:"port"`
+	Type     string `json:"type,omitempty"`
 	Detected bool   `json:"detected"`
 	Version  string `json:"version,omitempty"`
-	Name     string `json:"name,omitempty"`
 }
 
-// Request is the body of POST /v1/agents/register.
+// Request is the body of POST /v1/agents/register. Services is the ordered
+// service list, primary first.
 type Request struct {
-	PublicKey    string        `json:"public_key"`
-	Hostname     string        `json:"hostname"`
-	AgentVersion string        `json:"agent_version"`
-	TunnelMode   string        `json:"tunnel_mode"` // TunnelManaged or TunnelExternal
-	Service      *ServiceInfo  `json:"service,omitempty"`
-	Jellyfin     *JellyfinInfo `json:"jellyfin"`
+	PublicKey    string          `json:"public_key"`
+	Hostname     string          `json:"hostname"`
+	AgentVersion string          `json:"agent_version"`
+	TunnelMode   string          `json:"tunnel_mode"` // TunnelManaged or TunnelExternal
+	Services     []ServiceReport `json:"services"`
 }
 
 // Peer describes the gateway-side WireGuard peer.
@@ -65,13 +54,25 @@ type SpeedtestConfig struct {
 	MaxSeconds int    `json:"max_seconds"`
 }
 
-// Response is the body of a successful registration.
+// ServiceResult is the gateway's assignment for one service: which subdomain
+// and local port (service_port) back it. Name identifies it in heartbeats.
+type ServiceResult struct {
+	Name        string `json:"name"`
+	Subdomain   string `json:"subdomain"`
+	ServicePort int    `json:"service_port"`
+	Primary     bool   `json:"primary"`
+}
+
+// Response is the body of a successful registration. Services carries the
+// per-service subdomain/port assignments; Subdomain/ServicePort mirror the
+// primary.
 type Response struct {
 	AgentID           string          `json:"agent_id"`
 	AgentSecret       string          `json:"agent_secret"`
 	Subdomain         string          `json:"subdomain"`
 	WireGuard         WireGuardConfig `json:"wireguard"`
 	ServicePort       int             `json:"service_port"`
+	Services          []ServiceResult `json:"services"`
 	HeartbeatInterval int             `json:"heartbeat_interval_seconds"`
 	Speedtest         SpeedtestConfig `json:"speedtest"`
 }

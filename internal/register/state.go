@@ -19,9 +19,30 @@ type State struct {
 	PrivateKey        string          `json:"private_key"`
 	WireGuard         WireGuardConfig `json:"wireguard"`
 	ServicePort       int             `json:"service_port"`
+	// Services is the per-service subdomain/port assignment, primary first.
+	// Subdomain/ServicePort above mirror the primary.
+	Services          []ServiceState  `json:"services,omitempty"`
 	HeartbeatInterval int             `json:"heartbeat_interval_seconds"`
 	Speedtest         SpeedtestConfig `json:"speedtest"`
 	SpeedtestDone     bool            `json:"speedtest_done"`
+}
+
+// ServiceState is one service's gateway assignment, persisted so restarts
+// rebuild the same forwarders and heartbeat labels.
+type ServiceState struct {
+	Name      string `json:"name"`
+	Subdomain string `json:"subdomain"`
+	Port      int    `json:"port"`
+}
+
+// Ports returns the local ports the registration covers, for detecting a
+// changed TUNNELO_SERVICES between runs.
+func (s *State) Ports() []int {
+	ports := make([]int, 0, len(s.Services))
+	for _, svc := range s.Services {
+		ports = append(ports, svc.Port)
+	}
+	return ports
 }
 
 const stateFile = "state.json"

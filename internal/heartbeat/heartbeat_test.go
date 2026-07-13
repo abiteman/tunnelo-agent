@@ -23,7 +23,7 @@ func newSender(t *testing.T, gatewayURL, jellyfinURL string) *Sender {
 		AgentVersion: "v0.1.0-test",
 		Interval:     10 * time.Millisecond,
 		Tunnel:       tunnel.NewManager(tunnel.Config{}, slog.Default()),
-		Service:      detect.New(jellyfinURL, "", ""),
+		Services:     []Service{{Name: "jellyfin", Prober: detect.New(jellyfinURL, "", "")}},
 		Logger:       slog.Default(),
 	}
 }
@@ -74,11 +74,12 @@ func TestHeartbeatReportsStatus(t *testing.T) {
 	if rep.AgentVersion != "v0.1.0-test" {
 		t.Errorf("agent_version = %q", rep.AgentVersion)
 	}
-	if !rep.Jellyfin.Reachable || rep.Jellyfin.Version != "10.10.3" {
-		t.Errorf("jellyfin status = %+v, want reachable 10.10.3", rep.Jellyfin)
+	if len(rep.Services) != 1 {
+		t.Fatalf("services = %+v, want one entry", rep.Services)
 	}
-	if !rep.Service.Reachable || rep.Service.Type != "jellyfin" || rep.Service.Version != "10.10.3" {
-		t.Errorf("service status = %+v, want reachable jellyfin 10.10.3", rep.Service)
+	svc := rep.Services[0]
+	if svc.Name != "jellyfin" || !svc.Reachable || svc.Type != "jellyfin" || svc.Version != "10.10.3" {
+		t.Errorf("service status = %+v, want reachable jellyfin 10.10.3", svc)
 	}
 	if rep.Tunnel.Up {
 		t.Errorf("tunnel.up = true for a tunnel that never came up")
@@ -109,8 +110,8 @@ func TestHeartbeatOmitsTunnelInExternalMode(t *testing.T) {
 		if _, ok := body["tunnel"]; ok {
 			t.Errorf("heartbeat body contains tunnel block in external mode: %v", body)
 		}
-		if _, ok := body["jellyfin"]; !ok {
-			t.Errorf("heartbeat body missing jellyfin block: %v", body)
+		if _, ok := body["services"]; !ok {
+			t.Errorf("heartbeat body missing services block: %v", body)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no heartbeat received")
@@ -155,8 +156,8 @@ func TestHeartbeatReportsJellyfinDown(t *testing.T) {
 
 	select {
 	case rep := <-reports:
-		if rep.Jellyfin.Reachable {
-			t.Error("jellyfin.reachable = true, want false")
+		if len(rep.Services) != 1 || rep.Services[0].Reachable {
+			t.Errorf("services = %+v, want one unreachable entry", rep.Services)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no heartbeat received")

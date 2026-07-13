@@ -28,29 +28,28 @@ type TunnelStatus struct {
 	TxBytes           int64 `json:"tx_bytes"`
 }
 
-// JellyfinStatus mirrors the API contract's heartbeat jellyfin object.
-// Kept for gateways that predate the service-agnostic contract; it mirrors
-// ServiceStatus (version only when the service really is Jellyfin).
-type JellyfinStatus struct {
-	Reachable bool   `json:"reachable"`
-	Version   string `json:"version,omitempty"`
-}
-
-// ServiceStatus reports the exposed service's health, whatever it is.
-type ServiceStatus struct {
+// ServiceHealth is one service's health in a heartbeat, matched to the
+// gateway's services by Name (assigned at registration).
+type ServiceHealth struct {
+	Name      string `json:"name"`
 	Reachable bool   `json:"reachable"`
 	Type      string `json:"type,omitempty"`
 	Version   string `json:"version,omitempty"`
+}
+
+// Service pairs a gateway-assigned name with the prober that checks it.
+type Service struct {
+	Name   string
+	Prober *detect.Prober
 }
 
 // Report is the heartbeat request body. Tunnel is omitted in external
 // tunnel mode: the gateway terminates the tunnel and reads handshake state
 // from its own peer table.
 type Report struct {
-	AgentVersion string         `json:"agent_version"`
-	Tunnel       *TunnelStatus  `json:"tunnel,omitempty"`
-	Service      ServiceStatus  `json:"service"`
-	Jellyfin     JellyfinStatus `json:"jellyfin"`
+	AgentVersion string          `json:"agent_version"`
+	Tunnel       *TunnelStatus   `json:"tunnel,omitempty"`
+	Services     []ServiceHealth `json:"services"`
 }
 
 // TunnelStatusSource provides tunnel state for heartbeats. A nil source
@@ -72,7 +71,7 @@ type Sender struct {
 	AgentVersion string
 	Interval     time.Duration
 	Tunnel       TunnelStatusSource // nil when the user brings their own WireGuard
-	Service      *detect.Prober
+	Services     []Service
 	// OnSpeedtestRequest fires when a heartbeat response carries
 	// run_speedtest: true (the dashboard's re-run button). Must not block:
 	// the sender calls it inline between beats.
@@ -115,8 +114,7 @@ func (s *Sender) Run(ctx context.Context) error {
 // beat gathers status and posts one heartbeat. The gateway may adjust the
 // interval in its response.
 func (s *Sender) beat(ctx context.Context) error {
-	svc, jf := s.serviceStatus(ctx)
-	report := Report{AgentVersion: s.AgentVersion, Tunnel: s.tunnelStatus(), Service: svc, Jellyfin: jf}
+	report := Report{AgentVersion: s.AgentVersion, Tunnel: s.tunnelStatus(), Services: s.serviceHealth(ctx)}
 
 	payload, err := json.Marshal(report)
 	if err != nil {
@@ -172,18 +170,15 @@ func (s *Sender) tunnelStatus() *TunnelStatus {
 	return ts
 }
 
-// serviceStatus probes the exposed service and renders both the modern
-// service block and the legacy jellyfin mirror (version only when the
-// service really is Jellyfin, so old dashboards never show a Navidrome
-// version as a Jellyfin one).
-func (s *Sender) serviceStatus(ctx context.Context) (ServiceStatus, JellyfinStatus) {
-	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	res := s.Service.Probe(probeCtx)
-	svc := ServiceStatus{Reachable: res.Reachable, Type: res.Type, Version: res.Version}
-	jf := JellyfinStatus{Reachable: res.Reachable}
-	if res.Type == "jellyfin" {
-		jf.Version = res.Version
+// serviceHealth probes every exposed service and reports one entry per
+// service, labelled with the gateway-assigned name.
+func (s *Sender) serviceHealth(ctx context.Context) []ServiceHealth {
+	out := make([]ServiceHealth, 0, len(s.Services))
+	for _, svc := range s.Services {
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		res := svc.Prober.Probe(probeCtx)
+		cancel()
+		out = append(out, ServiceHealth{Name: svc.Name, Reachable: res.Reachable, Type: res.Type, Version: res.Version})
 	}
-	return svc, jf
+	return out
 }
