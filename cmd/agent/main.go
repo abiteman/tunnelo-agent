@@ -8,9 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -69,6 +71,13 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		if state, err = registerAgent(ctx, cfg, nil, log); err != nil {
 			return err
 		}
+	case !samePorts(state.Ports(), specPorts(cfg.Services)) && cfg.Token == "":
+		// The service set changed but there's no token to re-register with
+		// (tokens are one-time setup credentials). Keep running with the
+		// existing services rather than failing; the user sets TUNNELO_TOKEN
+		// to apply the change.
+		log.Warn("service set changed but TUNNELO_TOKEN is not set; keeping the existing services — set the token to apply the change",
+			"registered", state.Ports(), "configured", specPorts(cfg.Services))
 	case !samePorts(state.Ports(), specPorts(cfg.Services)):
 		// The configured service set changed: re-register (reusing the existing
 		// key so the tunnel doesn't reset) to pick up added/removed services.
@@ -107,9 +116,12 @@ func run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		// One forwarder per service: the tunnel-side listen port equals the
 		// service's local port, and each dials its own local target.
 		for _, sv := range services {
+			port := strconv.Itoa(sv.spec.Port)
 			forwarder := &tunnel.Forwarder{
-				ListenAddr: fmt.Sprintf("%s:%d", tunnelIP, sv.spec.Port),
-				TargetAddr: fmt.Sprintf("%s:%d", sv.spec.Host, sv.spec.Port),
+				// net.JoinHostPort brackets IPv6 hosts (e.g. [::1]:8096) so
+				// net.Dial/Listen accept them.
+				ListenAddr: net.JoinHostPort(tunnelIP, port),
+				TargetAddr: net.JoinHostPort(sv.spec.Host, port),
 				Logger:     log.With("service", sv.name, "subdomain", sv.sub),
 			}
 			group.Go(func() error { return forwarder.Run(ctx) })

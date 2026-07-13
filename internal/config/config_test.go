@@ -174,3 +174,29 @@ func TestServiceURLAliases(t *testing.T) {
 		t.Errorf("modern env should win: ServiceURL = %q", cfg.ServiceURL)
 	}
 }
+
+// Two services on the same port would collide (routing is keyed by port).
+func TestParseServicesRejectsDuplicatePort(t *testing.T) {
+	if _, err := parseServices("192.168.1.5:80,192.168.1.6:80", "/"); err == nil {
+		t.Error("duplicate port should be rejected")
+	}
+	// Distinct ports are fine.
+	if _, err := parseServices("192.168.1.5:80,192.168.1.6:81", "/"); err != nil {
+		t.Errorf("distinct ports rejected: %v", err)
+	}
+}
+
+// IPv6 hosts stay bracketed in the probe URL.
+func TestParseServicesIPv6(t *testing.T) {
+	specs, err := parseServices("[::1]:8096,7878", "/")
+	if err != nil {
+		t.Fatalf("parseServices: %v", err)
+	}
+	if specs[0].Host != "::1" || specs[0].URL != "http://[::1]:8096" {
+		t.Errorf("ipv6 primary = %+v, want host ::1 URL http://[::1]:8096", specs[0])
+	}
+	// Bare port inherits the bracketed host.
+	if specs[1].URL != "http://[::1]:7878" {
+		t.Errorf("ipv6 inherited URL = %q, want http://[::1]:7878", specs[1].URL)
+	}
+}

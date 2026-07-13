@@ -61,6 +61,16 @@ func LoadState(dir string) (*State, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", stateFile, err)
 	}
+	// Migrate pre-multi-service state (single subdomain/port, no services
+	// array) to a one-entry list, so an upgrade isn't mistaken for a changed
+	// service set (which would force a re-registration).
+	if len(s.Services) == 0 && s.Subdomain != "" {
+		port := s.ServicePort
+		if port == 0 {
+			port = 8096
+		}
+		s.Services = []ServiceState{{Name: s.Subdomain, Subdomain: s.Subdomain, Port: port}}
+	}
 	return &s, nil
 }
 

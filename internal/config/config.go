@@ -140,6 +140,7 @@ func Load(args []string) (*Config, error) {
 func parseServices(raw, healthPath string) ([]ServiceSpec, error) {
 	tokens := strings.Split(raw, ",")
 	specs := make([]ServiceSpec, 0, len(tokens))
+	seenPorts := make(map[int]bool, len(tokens))
 	host := ""
 	for _, tok := range tokens {
 		tok = strings.TrimSpace(tok)
@@ -161,10 +162,17 @@ func parseServices(raw, healthPath string) ([]ServiceSpec, error) {
 		if err != nil || port < 1 || port > 65535 {
 			return nil, fmt.Errorf("TUNNELO_SERVICES: invalid port in %q", tok)
 		}
+		// Tunnel-side routing is keyed by port, so each service needs a
+		// distinct one — two services on the same port would collide.
+		if seenPorts[port] {
+			return nil, fmt.Errorf("TUNNELO_SERVICES: duplicate port %d — each service needs its own port", port)
+		}
+		seenPorts[port] = true
 		specs = append(specs, ServiceSpec{
-			Host:       host,
-			Port:       port,
-			URL:        fmt.Sprintf("http://%s:%d", host, port),
+			Host: host,
+			Port: port,
+			// net.JoinHostPort brackets IPv6 hosts so the probe URL is valid.
+			URL:        "http://" + net.JoinHostPort(host, portStr),
 			HealthPath: healthPath,
 		})
 	}
