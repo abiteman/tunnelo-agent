@@ -13,12 +13,12 @@ import (
 // locally generated WireGuard private key, and the gateway-assigned config.
 // It contains secrets and is written with mode 0600.
 type State struct {
-	AgentID           string          `json:"agent_id"`
-	AgentSecret       string          `json:"agent_secret"`
-	Subdomain         string          `json:"subdomain"`
-	PrivateKey        string          `json:"private_key"`
-	WireGuard         WireGuardConfig `json:"wireguard"`
-	ServicePort       int             `json:"service_port"`
+	AgentID     string          `json:"agent_id"`
+	AgentSecret string          `json:"agent_secret"`
+	Subdomain   string          `json:"subdomain"`
+	PrivateKey  string          `json:"private_key"`
+	WireGuard   WireGuardConfig `json:"wireguard"`
+	ServicePort int             `json:"service_port"`
 	// Services is the per-service subdomain/port assignment, primary first.
 	// Subdomain/ServicePort above mirror the primary.
 	Services          []ServiceState  `json:"services,omitempty"`
