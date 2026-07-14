@@ -34,8 +34,7 @@ var version = "dev"
 func main() {
 	cfg, err := config.Load(os.Args[1:])
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		fatalConfigError(err, 2)
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	slog.SetDefault(log)
@@ -44,10 +43,33 @@ func main() {
 	defer stop()
 
 	if err := run(ctx, cfg, log); err != nil && !errors.Is(err, context.Canceled) {
+		// Every path run() can fail on (bad/expired token, a registration the
+		// gateway rejected as unfixable-by-retry) is the same "config problem,
+		// not a network blip" class as a bad flag/env var — retryable errors
+		// are handled with backoff inside run() and never reach here. So this
+		// gets the identical banner treatment as a config.Load failure below.
 		log.Error("agent exiting", "error", err)
-		os.Exit(1)
+		fatalConfigError(err, 1)
 	}
 	log.Info("agent stopped")
+}
+
+// fatalConfigError prints a deliberately loud, actionable banner for an
+// unrecoverable configuration problem (a bad flag/env var, an expired or
+// invalid token, a registration the gateway rejected outright) and exits.
+//
+// docker logs is the ONLY place these are visible — the agent hasn't reached
+// the gateway or the dashboard yet, so there is no other channel to surface
+// this on. Restarting can't fix a config error, so with --restart
+// unless-stopped the container will keep cycling until the user edits their
+// docker command and reruns it; a bare one-line error (the previous
+// behavior) reads exactly like a transient crash, not "go fix your command,"
+// especially once it's buried under repeated restart spam.
+func fatalConfigError(err error, code int) {
+	fmt.Fprintln(os.Stderr, "tunnelo-agent: configuration error —", err)
+	fmt.Fprintln(os.Stderr, "tunnelo-agent: this will NOT fix itself by restarting — fix the environment/flags above, then: docker rm -f tunnelo && <rerun your corrected install command>")
+	fmt.Fprintln(os.Stderr, "tunnelo-agent: (with --restart unless-stopped this container will keep restarting until it's fixed — that's expected, not a crash)")
+	os.Exit(code)
 }
 
 // runService is one resolved service at runtime: the local spec joined with
