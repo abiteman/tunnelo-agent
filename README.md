@@ -76,6 +76,16 @@ docker run -d --name tunnelo-agent \
   any HTTP service works (Navidrome, Audiobookshelf, …); reachability counts
   any HTTP answer, and Jellyfin additionally gets version detection.
   (`TUNNELO_JELLYFIN_URL` still works as an alias.)
+- **Multiple services on one box?** Set `TUNNELO_SERVICES` instead — a
+  comma-separated list of `IP:PORT`, or the shorthand `IP:PORT,PORT,PORT`
+  where bare ports inherit the first host
+  (e.g. `192.168.1.50:8096,7878,8989` for Jellyfin + Radarr + Sonarr). The
+  agent detects each service's type and the gateway gives each its own
+  subdomain (the first entry is your primary address; the rest become
+  `<primary>-radarr` etc., renamable from the dashboard). One tunnel, one
+  plan throughput ceiling shared across them. Changing the list restarts
+  registration automatically without resetting your tunnel. Make sure each
+  service has its own authentication enabled — the URLs are public.
 - The volume keeps your registration (credentials + private key) across
   container updates.
 
@@ -141,6 +151,7 @@ Every flag has an environment variable; flags win.
 |---|---|---|---|
 | `--token` | `TUNNELO_TOKEN` | — | One-time setup token (only until first registration) |
 | `--service-url` | `TUNNELO_SERVICE_URL` | `http://127.0.0.1:8096` | Where to reach the exposed service (`TUNNELO_JELLYFIN_URL` is a working alias) |
+| `--services` | `TUNNELO_SERVICES` | — | Expose several services: `IP:PORT,IP:PORT` or `IP:PORT,PORT,PORT` (bare ports inherit the first host). Overrides `--service-url` |
 | `--health-path` | `TUNNELO_HEALTH_PATH` | `/` | Path probed for reachability; any HTTP answer counts as up |
 | `--service-type` | `TUNNELO_SERVICE_TYPE` | autodetect | Display name for the dashboard (`jellyfin`, `navidrome`, …) |
 | `--gateway-url` | `TUNNELO_GATEWAY_URL` | `https://api.tunnelo.io` | Gateway API |

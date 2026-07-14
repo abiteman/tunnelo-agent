@@ -13,15 +13,36 @@ import (
 // locally generated WireGuard private key, and the gateway-assigned config.
 // It contains secrets and is written with mode 0600.
 type State struct {
-	AgentID           string          `json:"agent_id"`
-	AgentSecret       string          `json:"agent_secret"`
-	Subdomain         string          `json:"subdomain"`
-	PrivateKey        string          `json:"private_key"`
-	WireGuard         WireGuardConfig `json:"wireguard"`
-	ServicePort       int             `json:"service_port"`
+	AgentID     string          `json:"agent_id"`
+	AgentSecret string          `json:"agent_secret"`
+	Subdomain   string          `json:"subdomain"`
+	PrivateKey  string          `json:"private_key"`
+	WireGuard   WireGuardConfig `json:"wireguard"`
+	ServicePort int             `json:"service_port"`
+	// Services is the per-service subdomain/port assignment, primary first.
+	// Subdomain/ServicePort above mirror the primary.
+	Services          []ServiceState  `json:"services,omitempty"`
 	HeartbeatInterval int             `json:"heartbeat_interval_seconds"`
 	Speedtest         SpeedtestConfig `json:"speedtest"`
 	SpeedtestDone     bool            `json:"speedtest_done"`
+}
+
+// ServiceState is one service's gateway assignment, persisted so restarts
+// rebuild the same forwarders and heartbeat labels.
+type ServiceState struct {
+	Name      string `json:"name"`
+	Subdomain string `json:"subdomain"`
+	Port      int    `json:"port"`
+}
+
+// Ports returns the local ports the registration covers, for detecting a
+// changed TUNNELO_SERVICES between runs.
+func (s *State) Ports() []int {
+	ports := make([]int, 0, len(s.Services))
+	for _, svc := range s.Services {
+		ports = append(ports, svc.Port)
+	}
+	return ports
 }
 
 const stateFile = "state.json"
@@ -39,6 +60,16 @@ func LoadState(dir string) (*State, error) {
 	var s State
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", stateFile, err)
+	}
+	// Migrate pre-multi-service state (single subdomain/port, no services
+	// array) to a one-entry list, so an upgrade isn't mistaken for a changed
+	// service set (which would force a re-registration).
+	if len(s.Services) == 0 && s.Subdomain != "" {
+		port := s.ServicePort
+		if port == 0 {
+			port = 8096
+		}
+		s.Services = []ServiceState{{Name: s.Subdomain, Subdomain: s.Subdomain, Port: port}}
 	}
 	return &s, nil
 }

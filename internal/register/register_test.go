@@ -55,7 +55,7 @@ func TestRegisterSuccess(t *testing.T) {
 		PublicKey:    "agentpubkey=",
 		Hostname:     "media-box",
 		AgentVersion: "v0.1.0",
-		Jellyfin:     &JellyfinInfo{Detected: true, Version: "10.10.3"},
+		Services:     []ServiceReport{{Port: 8096, Type: "jellyfin", Detected: true, Version: "10.10.3"}},
 	})
 	if err != nil {
 		t.Fatalf("Register: %v", err)
@@ -67,8 +67,8 @@ func TestRegisterSuccess(t *testing.T) {
 	if gotReq.PublicKey != "agentpubkey=" {
 		t.Errorf("request public_key = %q", gotReq.PublicKey)
 	}
-	if gotReq.Jellyfin == nil || !gotReq.Jellyfin.Detected {
-		t.Errorf("request jellyfin = %+v, want detected", gotReq.Jellyfin)
+	if len(gotReq.Services) != 1 || !gotReq.Services[0].Detected || gotReq.Services[0].Port != 8096 {
+		t.Errorf("request services = %+v, want one detected on 8096", gotReq.Services)
 	}
 	if resp.AgentID != "agt_test" || resp.AgentSecret != "as_secret" {
 		t.Errorf("credentials = %q/%q", resp.AgentID, resp.AgentSecret)
