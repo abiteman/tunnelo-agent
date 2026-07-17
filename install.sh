@@ -9,16 +9,58 @@
 #   sudo ./install.sh <token>
 #
 # The token is only needed on first install; upgrades can omit it.
+#
+# Uninstall (removes the service + binary, keeps the token/credentials so a
+# reinstall resumes cleanly; add --purge / TUNNELO_PURGE=1 to wipe those too):
+#   curl -fsSL https://raw.githubusercontent.com/abiteman/tunnelo-agent/main/install.sh | sudo TUNNELO_UNINSTALL=1 sh
+#   sudo ./install.sh --uninstall [--purge]
 set -eu
 
 REPO="abiteman/tunnelo-agent"
 BIN_DIR="/usr/local/bin"
-ENV_FILE="/etc/tunnelo-agent/agent.env"
+CONFIG_DIR="/etc/tunnelo-agent"
+ENV_FILE="${CONFIG_DIR}/agent.env"
 UNIT_FILE="/etc/systemd/system/tunnelo-agent.service"
+STATE_DIR="/var/lib/tunnelo-agent"
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "error: this installer must run as root (it installs a systemd service)" >&2
     exit 1
+fi
+
+# --- uninstall -------------------------------------------------------------
+# Parsed before anything install-specific so it works on any host (no arch
+# check, no token needed) and is fully idempotent — every step tolerates the
+# thing already being gone.
+UNINSTALL=0
+PURGE=0
+for arg in "$@"; do
+    case "$arg" in
+        --uninstall|-u) UNINSTALL=1 ;;
+        --purge)        UNINSTALL=1; PURGE=1 ;;
+    esac
+done
+[ -n "${TUNNELO_UNINSTALL:-}" ] && UNINSTALL=1
+[ -n "${TUNNELO_PURGE:-}" ] && { UNINSTALL=1; PURGE=1; }
+
+if [ "$UNINSTALL" -eq 1 ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl disable --now tunnelo-agent 2>/dev/null || true
+    fi
+    rm -f "$UNIT_FILE"
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload 2>/dev/null || true
+    fi
+    rm -f "$BIN_DIR/tunnelo-agent"
+    echo "Removed the tunnelo-agent service and binary."
+    if [ "$PURGE" -eq 1 ]; then
+        rm -rf "$CONFIG_DIR" "$STATE_DIR"
+        echo "Purged $CONFIG_DIR and $STATE_DIR (token + agent credentials)."
+    elif [ -d "$CONFIG_DIR" ] || [ -d "$STATE_DIR" ]; then
+        echo "Kept $CONFIG_DIR and $STATE_DIR (token + agent credentials) so a"
+        echo "reinstall resumes the same registration. Re-run with --purge to remove them."
+    fi
+    exit 0
 fi
 
 if ! command -v systemctl >/dev/null 2>&1; then

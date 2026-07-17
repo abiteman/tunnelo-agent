@@ -141,6 +141,16 @@ uci commit firewall
 That's it — no manual NAT, because the agent's forwarder makes the
 `tunnelIP → Jellyfin` hop for you.
 
+**Uninstalling.** This is a procd (not systemd) setup, so the installer's
+`--uninstall` flag doesn't apply — reverse it by hand:
+
+```sh
+/etc/init.d/tunnelo-agent disable
+rm /etc/init.d/tunnelo-agent /usr/bin/tunnelo-agent
+rm -rf /etc/tunnelo-agent            # optional: removes token + credentials
+# and delete the 'Allow-Tunnelo' firewall rule you added above
+```
+
 ## OpenWrt: native WireGuard + external mode
 
 Let OpenWrt's own WireGuard carry the tunnel (works on any arch, including
