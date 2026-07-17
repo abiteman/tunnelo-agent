@@ -100,6 +100,18 @@ Installs `/usr/local/bin/tunnelo-agent` and a hardened systemd unit
 upgrade — an existing registration is never overwritten. Prefer to read
 before you pipe to shell? Good instinct: [`install.sh`](install.sh).
 
+**Uninstall.** Removes the service and binary but keeps your token and agent
+credentials, so a reinstall resumes the same registration:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/abiteman/tunnelo-agent/main/install.sh | sudo TUNNELO_UNINSTALL=1 sh
+# or, with the script downloaded:  sudo ./install.sh --uninstall
+```
+
+Add `--purge` (or `TUNNELO_PURGE=1`) to also delete `/etc/tunnelo-agent` and
+`/var/lib/tunnelo-agent`. Uninstall is idempotent — safe to run when nothing
+is installed.
+
 ### Unraid
 
 Search for **tunnelo-agent** in Community Applications (template in
