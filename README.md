@@ -143,6 +143,11 @@ The managed mode exists because this is exactly the plumbing most people
 don't want to own — but if you already own it, external mode stays out of
 your way.
 
+Running this on an **OpenWrt or pfSense router** — either the agent directly
+on the router or the router carrying the tunnel while the agent runs
+elsewhere — is covered step by step in [`docs/routers.md`](docs/routers.md),
+including the firewall/NAT rules for the forwarding hop.
+
 ## Configuration
 
 Every flag has an environment variable; flags win.
