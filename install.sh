@@ -53,16 +53,24 @@ echo "Installed $BIN_DIR/tunnelo-agent"
 
 # Write the environment file only when a token was provided, so re-running
 # the installer to upgrade never clobbers an existing registration.
+#
+# TUNNELO_GATEWAY_URL and TUNNELO_SERVICES are passed through from the
+# installer's environment when set (the dashboard's one-liner sets the gateway
+# URL, since the binary's compiled default only matches the public instance —
+# self-hosted and non-default deployments must point the agent at their own
+# api.<domain>). Both are optional; unset means the agent's built-in defaults.
 if [ -n "$TOKEN" ]; then
     mkdir -p "$(dirname "$ENV_FILE")"
     umask 077
-    cat > "$ENV_FILE" <<EOF
-# Tunnelo agent configuration. The token is only used for the first
-# registration; credentials live in /var/lib/tunnelo-agent afterwards.
-TUNNELO_TOKEN=${TOKEN}
-# Uncomment if Jellyfin is not on this machine at the default port:
-#TUNNELO_JELLYFIN_URL=http://127.0.0.1:8096
-EOF
+    {
+        echo "# Tunnelo agent configuration. The token is only used for the first"
+        echo "# registration; credentials live in /var/lib/tunnelo-agent afterwards."
+        echo "TUNNELO_TOKEN=${TOKEN}"
+        [ -n "${TUNNELO_GATEWAY_URL:-}" ] && echo "TUNNELO_GATEWAY_URL=${TUNNELO_GATEWAY_URL}"
+        [ -n "${TUNNELO_SERVICES:-}" ] && echo "TUNNELO_SERVICES=${TUNNELO_SERVICES}"
+        echo "# Uncomment if Jellyfin is not on this machine at the default port:"
+        echo "#TUNNELO_JELLYFIN_URL=http://127.0.0.1:8096"
+    } > "$ENV_FILE"
     echo "Wrote $ENV_FILE"
 fi
 
