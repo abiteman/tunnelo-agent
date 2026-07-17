@@ -100,6 +100,18 @@ Installs `/usr/local/bin/tunnelo-agent` and a hardened systemd unit
 upgrade — an existing registration is never overwritten. Prefer to read
 before you pipe to shell? Good instinct: [`install.sh`](install.sh).
 
+By default this exposes Jellyfin on this host. To expose several services on
+one tunnel, pass `TUNNELO_SERVICES` (a `host:port` comma list; bare ports
+reuse the first host) — the installer persists it to the env file:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/abiteman/tunnelo-agent/main/install.sh \
+  | sudo TUNNELO_TOKEN=<your token> TUNNELO_SERVICES=127.0.0.1:8096,7878,8989 sh
+```
+
+Since the agent runs on the host (not a container), `127.0.0.1` reaches
+services on this machine; use a LAN IP for services on another box.
+
 **Uninstall.** Removes the service and binary but keeps your token and agent
 credentials, so a reinstall resumes the same registration:
 

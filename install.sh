@@ -144,7 +144,12 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now tunnelo-agent
+systemctl enable tunnelo-agent 2>/dev/null || true
+# restart, not `enable --now`: on a re-run (upgrade, or a changed
+# TUNNELO_SERVICES / gateway URL) the unit is already active, and `--now` only
+# *starts* it — a no-op that leaves the old binary and env loaded. restart
+# starts a stopped unit and reloads a running one, so a re-run always applies.
+systemctl restart tunnelo-agent
 echo
 echo "Tunnelo agent is running. Check it with:"
 echo "  systemctl status tunnelo-agent"
