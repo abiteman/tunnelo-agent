@@ -34,8 +34,8 @@ ports on it.
 - Add `Services []ServiceSpec{Host, Port, HealthPath, Type}` parsed from
   `TUNNELO_SERVICES` (the `IP:PORT[,PORT…]` grammar above; validate host:port,
   inherit the leading host for bare ports).
-- Keep `TUNNELO_SERVICE_URL` / `TUNNELO_JELLYFIN_URL` as sugar for a one-entry
-  list, so single-service installs are unchanged.
+- Keep `TUNNELO_SERVICE_URL` as sugar for a one-entry list, so single-service
+  installs are unchanged.
 - `ServiceHostPort()` becomes per-spec.
 
 ### `internal/detect/detect.go`

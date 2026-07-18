@@ -33,8 +33,8 @@ type Config struct {
 	GatewayURL string
 	StateDir   string
 	// ServiceURL is the local HTTP service the tunnel exposes (Jellyfin by
-	// default, but any HTTP service works). TUNNELO_JELLYFIN_URL remains a
-	// supported alias. Used when Services (below) is unset.
+	// default, but any HTTP service works). Used when Services (below) is
+	// unset.
 	ServiceURL string
 	// ServicesRaw is the multi-service list: "IP:PORT,IP:PORT,…" or the
 	// shorthand "IP:PORT,PORT,…" where bare ports inherit the first entry's
@@ -73,11 +73,8 @@ func Load(args []string) (*Config, error) {
 		"gateway API base URL (env TUNNELO_GATEWAY_URL)")
 	fs.StringVar(&cfg.StateDir, "state-dir", envStr("TUNNELO_STATE_DIR", "/var/lib/tunnelo-agent"),
 		"directory for persisted state, including the WireGuard private key (env TUNNELO_STATE_DIR)")
-	serviceDefault := envStr("TUNNELO_SERVICE_URL", envStr("TUNNELO_JELLYFIN_URL", "http://127.0.0.1:8096"))
-	fs.StringVar(&cfg.ServiceURL, "service-url", serviceDefault,
+	fs.StringVar(&cfg.ServiceURL, "service-url", envStr("TUNNELO_SERVICE_URL", "http://127.0.0.1:8096"),
 		"where to reach the local service the tunnel exposes (env TUNNELO_SERVICE_URL)")
-	fs.StringVar(&cfg.ServiceURL, "jellyfin-url", serviceDefault,
-		"deprecated alias for --service-url (env TUNNELO_JELLYFIN_URL)")
 	fs.StringVar(&cfg.ServicesRaw, "services", envStr("TUNNELO_SERVICES", ""),
 		"expose several services: IP:PORT,IP:PORT or IP:PORT,PORT,PORT (bare ports inherit the first host); overrides --service-url (env TUNNELO_SERVICES)")
 	fs.StringVar(&cfg.HealthPath, "health-path", envStr("TUNNELO_HEALTH_PATH", "/"),

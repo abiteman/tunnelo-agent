@@ -75,7 +75,6 @@ docker run -d --name tunnelo-agent \
   compose service name if they share a network. Jellyfin is the default, but
   any HTTP service works (Navidrome, Audiobookshelf, …); reachability counts
   any HTTP answer, and Jellyfin additionally gets version detection.
-  (`TUNNELO_JELLYFIN_URL` still works as an alias.)
 - **Multiple services on one box?** Set `TUNNELO_SERVICES` instead — a
   comma-separated list of `IP:PORT`, or the shorthand `IP:PORT,PORT,PORT`
   where bare ports inherit the first host
@@ -179,7 +178,7 @@ Every flag has an environment variable; flags win.
 | Flag | Env | Default | Purpose |
 |---|---|---|---|
 | `--token` | `TUNNELO_TOKEN` | — | One-time setup token (only until first registration) |
-| `--service-url` | `TUNNELO_SERVICE_URL` | `http://127.0.0.1:8096` | Where to reach the exposed service (`TUNNELO_JELLYFIN_URL` is a working alias) |
+| `--service-url` | `TUNNELO_SERVICE_URL` | `http://127.0.0.1:8096` | Where to reach the exposed service |
 | `--services` | `TUNNELO_SERVICES` | — | Expose several services: `IP:PORT,IP:PORT` or `IP:PORT,PORT,PORT` (bare ports inherit the first host). Overrides `--service-url` |
 | `--health-path` | `TUNNELO_HEALTH_PATH` | `/` | Path probed for reachability; any HTTP answer counts as up |
 | `--service-type` | `TUNNELO_SERVICE_TYPE` | autodetect | Display name for the dashboard (`jellyfin`, `navidrome`, …) |
