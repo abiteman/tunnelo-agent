@@ -111,7 +111,7 @@ if [ -n "$TOKEN" ]; then
         [ -n "${TUNNELO_GATEWAY_URL:-}" ] && echo "TUNNELO_GATEWAY_URL=${TUNNELO_GATEWAY_URL}"
         [ -n "${TUNNELO_SERVICES:-}" ] && echo "TUNNELO_SERVICES=${TUNNELO_SERVICES}"
         echo "# Uncomment if Jellyfin is not on this machine at the default port:"
-        echo "#TUNNELO_JELLYFIN_URL=http://127.0.0.1:8096"
+        echo "#TUNNELO_SERVICE_URL=http://127.0.0.1:8096"
     } > "$ENV_FILE"
     echo "Wrote $ENV_FILE"
 fi

@@ -20,7 +20,7 @@ func TestLoadDefaultsAndFlags(t *testing.T) {
 	cfg, err = Load([]string{
 		"--token", "tok",
 		"--gateway-url", "https://gw.example.com",
-		"--jellyfin-url", "http://media:8096",
+		"--service-url", "http://media:8096",
 		"--userspace",
 		"--log-level", "debug",
 	})
@@ -150,28 +150,16 @@ func TestParseServices(t *testing.T) {
 
 func itoa(n int) string { return strconv.Itoa(n) }
 
-// Both the new --service-url flag and the legacy --jellyfin-url alias (and
-// their env vars) land in ServiceURL; TUNNELO_SERVICE_URL wins over
-// TUNNELO_JELLYFIN_URL.
-func TestServiceURLAliases(t *testing.T) {
+func TestServiceURLFromFlagAndEnv(t *testing.T) {
 	cfg, err := Load([]string{"--service-url", "http://nas:4533"})
 	if err != nil || cfg.ServiceURL != "http://nas:4533" {
 		t.Errorf("service-url flag: %+v, %v", cfg, err)
 	}
-	cfg, err = Load([]string{"--jellyfin-url", "http://media:8096"})
-	if err != nil || cfg.ServiceURL != "http://media:8096" {
-		t.Errorf("jellyfin-url alias: %+v, %v", cfg, err)
-	}
 
-	t.Setenv("TUNNELO_JELLYFIN_URL", "http://old:8096")
-	cfg, _ = Load(nil)
-	if cfg.ServiceURL != "http://old:8096" {
-		t.Errorf("legacy env: ServiceURL = %q", cfg.ServiceURL)
-	}
 	t.Setenv("TUNNELO_SERVICE_URL", "http://new:4533")
 	cfg, _ = Load(nil)
 	if cfg.ServiceURL != "http://new:4533" {
-		t.Errorf("modern env should win: ServiceURL = %q", cfg.ServiceURL)
+		t.Errorf("env: ServiceURL = %q", cfg.ServiceURL)
 	}
 }
 
